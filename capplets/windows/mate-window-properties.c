@@ -33,7 +33,10 @@
 #include <glib/gi18n.h>
 #include <string.h>
 
+#include <gdk/gdk.h>
+#ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
+#endif
 
 #include "mate-metacity-support.h"
 #include "wm-common.h"
@@ -370,11 +373,13 @@ static void
 wm_changed_callback (GdkScreen *screen,
                      void      *data)
 {
-    const char *current_wm;
+    char *current_wm;
 
-    current_wm = gdk_x11_screen_get_window_manager_name (screen);
+    current_wm = wm_common_get_current_window_manager ();
 
     gtk_widget_set_sensitive (dialog_win, g_strcmp0 (current_wm, WM_COMMON_MARCO) == 0);
+
+    g_free (current_wm);
 }
 
 static void
@@ -396,23 +401,27 @@ main (int argc, char **argv)
     GtkBuilder *builder;
     GdkScreen  *screen;
     GtkWidget  *nb;
-    const char *current_wm;
+    char       *current_wm;
     int i;
 
     capplet_init (NULL, &argc, &argv);
 
     screen = gdk_display_get_default_screen (gdk_display_get_default ());
-    current_wm = gdk_x11_screen_get_window_manager_name (screen);
+    current_wm = wm_common_get_current_window_manager ();
 
     if (g_strcmp0 (current_wm, WM_COMMON_METACITY) == 0) {
         mate_metacity_config_tool ();
+        g_free (current_wm);
         return 0;
     }
 
     if (g_strcmp0 (current_wm, WM_COMMON_MARCO) != 0) {
         wm_unsupported ();
+        g_free (current_wm);
         return 1;
     }
+
+    g_free (current_wm);
 
     builder = gtk_builder_new_from_resource ("/org/mate/mcc/windows/window-properties.ui");
 
@@ -551,8 +560,10 @@ main (int argc, char **argv)
     g_signal_connect (marco_settings, "changed::" MARCO_FOCUS_KEY,
                       G_CALLBACK (mouse_focus_changed_callback), NULL);
 
-    g_signal_connect (screen, "window_manager_changed",
-                      G_CALLBACK (wm_changed_callback), NULL);
+    if (GDK_IS_X11_DISPLAY (gdk_display_get_default ())) {
+        g_signal_connect (screen, "window_manager_changed",
+                          G_CALLBACK (wm_changed_callback), NULL);
+    }
 
     i = 0;
     while (i < n_mouse_modifiers) {
@@ -577,9 +588,11 @@ main (int argc, char **argv)
     return 0;
 }
 
+#ifdef GDK_WINDOWING_X11
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <gdk/gdkx.h>
+#endif
 
 static void
 fill_radio (GtkRadioButton     *group,
@@ -594,6 +607,7 @@ fill_radio (GtkRadioButton     *group,
 static void
 reload_mouse_modifiers (void)
 {
+#ifdef GDK_WINDOWING_X11
     XModifierKeymap *modmap;
     KeySym *keymap;
     int keysyms_per_keycode;
@@ -605,17 +619,22 @@ reload_mouse_modifiers (void)
     int min_keycode, max_keycode;
     int mod_meta, mod_super, mod_hyper;
     AtkObject *label_accessible;
+    GdkDisplay *display = gdk_display_get_default ();
 
-    XDisplayKeycodes (gdk_x11_display_get_xdisplay(gdk_display_get_default()),
+    if (!GDK_IS_X11_DISPLAY (display)) {
+        goto fallback;
+    }
+
+    XDisplayKeycodes (gdk_x11_display_get_xdisplay(display),
                       &min_keycode,
                       &max_keycode);
 
-    keymap = XGetKeyboardMapping (gdk_x11_display_get_xdisplay(gdk_display_get_default()),
+    keymap = XGetKeyboardMapping (gdk_x11_display_get_xdisplay(display),
                                   min_keycode,
                                   max_keycode - min_keycode,
                                   &keysyms_per_keycode);
 
-    modmap = XGetModifierMapping (gdk_x11_display_get_xdisplay(gdk_display_get_default()));
+    modmap = XGetModifierMapping (gdk_x11_display_get_xdisplay(display));
 
     have_super = FALSE;
     have_meta = FALSE;
@@ -712,6 +731,29 @@ reload_mouse_modifiers (void)
 
     g_assert (i == n_mouse_modifiers);
 
+    goto end;
+
+fallback:
+#endif
+    i = 0;
+    while (i < n_mouse_modifiers) {
+        g_free (mouse_modifiers[i].name);
+        if (mouse_modifiers[i].radio)
+            gtk_widget_destroy (mouse_modifiers[i].radio);
+        ++i;
+    }
+    g_free (mouse_modifiers);
+    mouse_modifiers = NULL;
+
+    n_mouse_modifiers = 1;
+    mouse_modifiers = g_new0 (MouseClickModifier, n_mouse_modifiers);
+    mouse_modifiers[0].number = 0;
+    mouse_modifiers[0].name = g_strdup (_("_Alt"));
+    mouse_modifiers[0].value = "Alt";
+
+#ifdef GDK_WINDOWING_X11
+end:
+#endif
     i = 0;
     while (i < n_mouse_modifiers) {
         fill_radio (i == 0 ? NULL : GTK_RADIO_BUTTON (mouse_modifiers[i-1].radio), &mouse_modifiers[i]);

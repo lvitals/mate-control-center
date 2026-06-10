@@ -67,8 +67,16 @@ wm_common_get_window_manager_property (Atom atom)
 char*
 wm_common_get_current_window_manager (void)
 {
-  if (!(GDK_IS_X11_DISPLAY (gdk_display_get_default())))
+  GdkDisplay *display = gdk_display_get_default ();
+
+  if (!(GDK_IS_X11_DISPLAY (display)))
+  {
+    if (g_strcmp0 (g_getenv ("XDG_CURRENT_DESKTOP"), "MATE") == 0 ||
+        g_strcmp0 (g_getenv ("WAYLAND_DISPLAY"), NULL) != 0)
+      return g_strdup (WM_COMMON_MARCO);
+
     return g_strdup (WM_COMMON_UNKNOWN);
+  }
 
   Atom atom = gdk_x11_get_xatom_by_name ("_NET_WM_NAME");
   char *result;
@@ -83,13 +91,15 @@ wm_common_get_current_window_manager (void)
 char**
 wm_common_get_current_keybindings (void)
 {
+  GdkDisplay *display = gdk_display_get_default ();
 
-  if (!(GDK_IS_X11_DISPLAY (gdk_display_get_default())))
+  if (!(GDK_IS_X11_DISPLAY (display)))
   {
     /*This should never reached in wayland as compositors control
      *and limit keybindings
      */
-    return NULL;
+    char *to_copy[] = { WM_COMMON_MARCO, NULL };
+    return g_strdupv (to_copy);
   }
 
   Atom keybindings_atom = gdk_x11_get_xatom_by_name ("_MATE_WM_KEYBINDINGS");
