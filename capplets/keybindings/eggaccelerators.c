@@ -360,9 +360,14 @@ egg_accelerator_parse_virtual (const gchar            *accelerator,
 	    }
 	  else if (keycode != NULL)
 	    {
-	      *keycode = XKeysymToKeycode (GDK_DISPLAY_XDISPLAY(gdk_display_get_default()), keyval);
-	      if (*keycode == 0)
-	 	bad_keyval = TRUE;
+	      GdkDisplay *display = gdk_display_get_default ();
+	      if (GDK_IS_X11_DISPLAY (display)) {
+	          *keycode = XKeysymToKeycode (GDK_DISPLAY_XDISPLAY(display), keyval);
+	          if (*keycode == 0)
+	              bad_keyval = TRUE;
+	      } else {
+	          *keycode = 0;
+	      }
 	    }
 
           accelerator += len;
@@ -528,9 +533,16 @@ reload_modmap (GdkKeymap *keymap,
   XModifierKeymap *xmodmap;
   int map_size;
   int i;
+  GdkDisplay *display = gdk_display_get_default ();
+
+  if (!GDK_IS_X11_DISPLAY (display))
+  {
+    memset (modmap->mapping, 0, sizeof (modmap->mapping));
+    goto fallback;
+  }
 
   /* FIXME multihead */
-  xmodmap = XGetModifierMapping (gdk_x11_get_default_xdisplay ());
+  xmodmap = XGetModifierMapping (GDK_DISPLAY_XDISPLAY (display));
 
   memset (modmap->mapping, 0, sizeof (modmap->mapping));
 
@@ -588,6 +600,9 @@ reload_modmap (GdkKeymap *keymap,
       g_free (keys);
     }
 
+  XFreeModifiermap (xmodmap);
+
+fallback:
   /* Add in the not-really-virtual fixed entries */
   modmap->mapping[EGG_MODMAP_ENTRY_SHIFT] |= EGG_VIRTUAL_SHIFT_MASK;
   modmap->mapping[EGG_MODMAP_ENTRY_CONTROL] |= EGG_VIRTUAL_CONTROL_MASK;
