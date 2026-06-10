@@ -2609,8 +2609,22 @@ int
 main (int argc, char **argv)
 {
     App *app;
+    GdkDisplay *display;
 
     capplet_init (NULL, &argc, &argv);
+
+    display = gdk_display_get_default ();
+    if (!GDK_IS_X11_DISPLAY (display)) {
+        GtkWidget *dialog;
+        dialog = gtk_message_dialog_new (NULL,
+                                         GTK_DIALOG_MODAL,
+                                         GTK_MESSAGE_INFO,
+                                         GTK_BUTTONS_OK,
+                                         _("Display settings are not yet supported on Wayland."));
+        gtk_dialog_run (GTK_DIALOG (dialog));
+        gtk_widget_destroy (dialog);
+        return 0;
+    }
 
     app = g_new0 (App, 1);
 
