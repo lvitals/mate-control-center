@@ -177,11 +177,20 @@ setup_xkb_tabs (GtkBuilder * dialog)
 {
 	GtkWidget *chk_new_windows_inherit_layout =
 	    WID ("chk_new_windows_inherit_layout");
+	GdkDisplay *display = gdk_display_get_default ();
+
+	if (!GDK_IS_X11_DISPLAY (display)) {
+		GtkNotebook *nb = GTK_NOTEBOOK (gtk_builder_get_object (dialog, "keyboard_notebook"));
+		/* Remove Layouts and Options tabs on Wayland */
+		gtk_notebook_remove_page (nb, 1);
+		gtk_notebook_remove_page (nb, 1);
+		return;
+	}
 
 	xkb_general_settings = g_settings_new (XKB_GENERAL_SCHEMA);
 	xkb_kbd_settings = g_settings_new (XKB_KBD_SCHEMA);
 
-	engine = xkl_engine_get_instance (GDK_DISPLAY_XDISPLAY(gdk_display_get_default()));
+	engine = xkl_engine_get_instance (GDK_DISPLAY_XDISPLAY(display));
 	config_registry = xkl_config_registry_get_instance (engine);
 
 	matekbd_desktop_config_init (&desktop_config, engine);
