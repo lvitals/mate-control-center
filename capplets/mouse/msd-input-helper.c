@@ -32,8 +32,12 @@ gboolean
 supports_xinput_devices (void)
 {
         gint op_code, event, error;
+        GdkDisplay *display = gdk_display_get_default ();
 
-        return XQueryExtension (GDK_DISPLAY_XDISPLAY (gdk_display_get_default ()),
+        if (!GDK_IS_X11_DISPLAY (display))
+                return FALSE;
+
+        return XQueryExtension (GDK_DISPLAY_XDISPLAY (display),
                                 "XInputExtension",
                                 &op_code,
                                 &event,

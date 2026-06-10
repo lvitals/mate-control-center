@@ -183,6 +183,9 @@ synaptics_check_capabilities (GtkBuilder *dialog)
 	unsigned char *data;
 
 	display = gdk_display_get_default ();
+	if (!GDK_IS_X11_DISPLAY (display))
+		return;
+
 	prop = XInternAtom (GDK_DISPLAY_XDISPLAY(display), "Synaptics Capabilities", True);
 	if (!prop)
 		return;
