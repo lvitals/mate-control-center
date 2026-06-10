@@ -148,16 +148,25 @@ drw_break_window_init (DrwBreakWindow *window)
 
 	gdk_monitor_get_geometry (gdk_display_get_monitor (display, root_monitor), &monitor);
 
-	gtk_window_set_default_size (GTK_WINDOW (window),
-				     WidthOfScreen (gdk_x11_screen_get_xscreen (screen)) / scale,
-				     HeightOfScreen (gdk_x11_screen_get_xscreen (screen)) / scale);
+	if (GDK_IS_X11_DISPLAY (display)) {
+		gtk_window_set_default_size (GTK_WINDOW (window),
+					     WidthOfScreen (gdk_x11_screen_get_xscreen (screen)) / scale,
+					     HeightOfScreen (gdk_x11_screen_get_xscreen (screen)) / scale);
 
-	gtk_window_set_decorated (GTK_WINDOW (window), FALSE);
-	gtk_widget_set_app_paintable (GTK_WIDGET (window), TRUE);
-	drw_setup_background (GTK_WIDGET (window));
+		right_padding = WidthOfScreen (gdk_x11_screen_get_xscreen (screen)) / scale - monitor.width - monitor.x;
+		bottom_padding = HeightOfScreen (gdk_x11_screen_get_xscreen (screen)) / scale - monitor.height - monitor.y;
+	} else {
+		GdkMonitor *mon = gdk_display_get_monitor (display, root_monitor);
+		GdkRectangle geom;
+		gdk_monitor_get_geometry (mon, &geom);
 
-	right_padding = WidthOfScreen (gdk_x11_screen_get_xscreen (screen)) / scale - monitor.width - monitor.x;
-	bottom_padding = HeightOfScreen (gdk_x11_screen_get_xscreen (screen)) / scale - monitor.height - monitor.y;
+		gtk_window_set_default_size (GTK_WINDOW (window),
+					     geom.width / scale,
+					     geom.height / scale);
+
+		right_padding = geom.width / scale - monitor.width - monitor.x;
+		bottom_padding = geom.height / scale - monitor.height - monitor.y;
+	}
 
 	outer_vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
 	gtk_widget_set_hexpand (outer_vbox, TRUE);

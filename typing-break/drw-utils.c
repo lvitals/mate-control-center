@@ -123,18 +123,35 @@ set_pixmap_background (GtkWidget *window)
 	cairo_t           *cr;
 	cairo_region_t    *cairo_region;
 	GdkDrawingContext *gdc;
+	GdkDisplay        *display;
 
 	gtk_widget_realize (window);
 
+	display = gtk_widget_get_display (window);
 	screen = gtk_widget_get_screen (window);
 	scale = gtk_widget_get_scale_factor (window);
-	width = WidthOfScreen (gdk_x11_screen_get_xscreen (screen)) / scale;
-	height = HeightOfScreen (gdk_x11_screen_get_xscreen (screen)) / scale;
 
-	tmp_pixbuf = gdk_pixbuf_get_from_window (gdk_screen_get_root_window (screen),
-						 0,
-						 0,
-						 width, height);
+	if (GDK_IS_X11_DISPLAY (display)) {
+		width = WidthOfScreen (gdk_x11_screen_get_xscreen (screen)) / scale;
+		height = HeightOfScreen (gdk_x11_screen_get_xscreen (screen)) / scale;
+	} else {
+		GdkMonitor *monitor = gdk_display_get_monitor_at_window (display, gtk_widget_get_window (window));
+		GdkRectangle geometry;
+		if (!monitor) monitor = gdk_display_get_monitor (display, 0);
+		gdk_monitor_get_geometry (monitor, &geometry);
+		width = geometry.width / scale;
+		height = geometry.height / scale;
+	}
+
+	if (GDK_IS_X11_DISPLAY (display)) {
+		tmp_pixbuf = gdk_pixbuf_get_from_window (gdk_screen_get_root_window (screen),
+							 0,
+							 0,
+							 width, height);
+	} else {
+		tmp_pixbuf = gdk_pixbuf_new (GDK_COLORSPACE_RGB, FALSE, 8, width, height);
+		gdk_pixbuf_fill (tmp_pixbuf, 0x000000FF);
+	}
 
 	pixbuf = gdk_pixbuf_new_from_file (IMAGEDIR "/ocean-stripes.png", NULL);
 

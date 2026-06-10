@@ -547,9 +547,19 @@ create_secondary_break_windows (void)
 
 		gtk_window_set_screen (GTK_WINDOW (window), screen);
 
-		gtk_window_set_default_size (GTK_WINDOW (window),
-					     WidthOfScreen (gdk_x11_screen_get_xscreen (screen)) / scale,
-					     HeightOfScreen (gdk_x11_screen_get_xscreen (screen)) / scale);
+		if (GDK_IS_X11_DISPLAY (display)) {
+			gtk_window_set_default_size (GTK_WINDOW (window),
+						     WidthOfScreen (gdk_x11_screen_get_xscreen (screen)) / scale,
+						     HeightOfScreen (gdk_x11_screen_get_xscreen (screen)) / scale);
+		} else {
+			GdkMonitor *monitor = gdk_display_get_monitor_at_window (display, gtk_widget_get_window (window));
+			GdkRectangle geometry;
+			if (!monitor) monitor = gdk_display_get_monitor (display, 0);
+			gdk_monitor_get_geometry (monitor, &geometry);
+			gtk_window_set_default_size (GTK_WINDOW (window),
+						     geometry.width / scale,
+						     geometry.height / scale);
+		}
 
 		gtk_widget_set_app_paintable (GTK_WIDGET (window), TRUE);
 		drw_setup_background (GTK_WIDGET (window));
