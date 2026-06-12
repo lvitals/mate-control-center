@@ -1,7 +1,35 @@
+wayland_scanner = find_program('wayland-scanner', required: true)
+
+wl_protocols = [
+  'protocols/wlr-output-management-unstable-v1.xml',
+]
+
+wl_protocols_src = []
+wl_protocols_headers = []
+
+foreach p : wl_protocols
+  wl_protocols_src += custom_target(
+    p.underscorify() + '_c',
+    input: p,
+    output: '@BASENAME@-protocol.c',
+    command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+  )
+  wl_protocols_headers += custom_target(
+    p.underscorify() + '_h',
+    input: p,
+    output: '@BASENAME@-protocol.h',
+    command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+  )
+endforeach
+
 sources = files(
   'xrandr-capplet.c',
   'scrollarea.c',
+  'wayland-display.c',
 )
+
+sources += wl_protocols_src
+sources += wl_protocols_headers
 
 sources += gnome.compile_resources(
   'mate-display-properties-resources',

@@ -108,6 +108,7 @@ COMMON_MODULES="gtk+-3.0 >= $GTK_REQUIRED dnl
  libxml-2.0 dnl
  udisks2 dnl
  libgtop-2.0 dnl
+ wayland-client dnl
  mate-desktop-2.0 >= $MATE_DESKTOP_REQUIRED"
 PKG_CHECK_MODULES(CAPPLET, $COMMON_MODULES)
 PKG_CHECK_MODULES(MATECC, $COMMON_MODULES libmate-menu >= 1.21.0)

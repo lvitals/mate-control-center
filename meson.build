@@ -92,6 +92,8 @@ enable_accountsservice = get_option('accountsservice')
 accounts_dep = dependency('accountsservice', version: '>= 0.6.39', required: enable_accountsservice)
 config_h.set10('HAVE_ACCOUNTSSERVICE', accounts_dep.found())
 
+wayland_client_dep = dependency('wayland-client')
+
 common_deps = [
   gio_dep,
   xcursor_dep,
@@ -100,6 +102,7 @@ common_deps = [
   marco_dep,
   mate_desktop_dep,
   accounts_dep,
+  wayland_client_dep,
   dependency('gio-unix-2.0'),
   dependency('gthread-2.0'),
   gtk_dep,

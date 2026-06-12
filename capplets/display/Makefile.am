@@ -1,11 +1,21 @@
 # This is used in MATECC_CAPPLETS_CFLAGS
 cappletname = display
 
+WAYLAND_PROTOCOLS_DIR = $(srcdir)/protocols
+
+wlr-output-management-unstable-v1-protocol.c: $(WAYLAND_PROTOCOLS_DIR)/wlr-output-management-unstable-v1.xml
+	wayland-scanner private-code < $< > $@
+
+wlr-output-management-unstable-v1-protocol.h: $(WAYLAND_PROTOCOLS_DIR)/wlr-output-management-unstable-v1.xml
+	wayland-scanner client-header < $< > $@
+
 BUILT_SOURCES = \
 	foo-marshal.h \
 	foo-marshal.c \
 	mate-display-properties-resources.h \
-	mate-display-properties-resources.c
+	mate-display-properties-resources.c \
+	wlr-output-management-unstable-v1-protocol.h \
+	wlr-output-management-unstable-v1-protocol.c
 
 ui_files = display-capplet.ui
 
@@ -20,7 +30,9 @@ nodist_mate_display_properties_SOURCES = \
 mate_display_properties_SOURCES =	\
 	xrandr-capplet.c		\
 	scrollarea.c			\
-	scrollarea.h
+	scrollarea.h \
+	wayland-display.c \
+	wayland-display.h
 
 mate_display_properties_LDFLAGS = -export-dynamic
 mate_display_properties_LDADD = \
