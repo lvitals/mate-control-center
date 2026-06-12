@@ -40,6 +40,22 @@
 
 #define MATE_INTERFACE_SCHEMA                 "org.mate.interface"
 #define WINDOW_SCALE_KEY                      "window-scaling-factor"
+#define MATE_PANEL_SCHEMA                     "org.mate.panel"
+#define MATE_PANEL_TOPLEVEL_SCHEMA            "org.mate.panel.toplevel"
+#define MATE_PANEL_TOPLEVEL_PATH              "/org/mate/panel/toplevels/"
+#define MATE_PANEL_TOPLEVEL_ID_LIST_KEY       "toplevel-id-list"
+#define MATE_PANEL_TOPLEVEL_MONITOR_KEY       "monitor"
+#define MATE_PANEL_TOPLEVEL_EXPAND_KEY        "expand"
+#define MATE_PANEL_TOPLEVEL_ORIENTATION_KEY   "orientation"
+#define MATE_PANEL_TOPLEVEL_SIZE_KEY          "size"
+#define MATE_PANEL_TOPLEVEL_X_KEY             "x"
+#define MATE_PANEL_TOPLEVEL_Y_KEY             "y"
+#define MATE_PANEL_TOPLEVEL_X_RIGHT_KEY       "x-right"
+#define MATE_PANEL_TOPLEVEL_Y_BOTTOM_KEY      "y-bottom"
+#define MATE_PANEL_TOPLEVEL_X_CENTERED_KEY    "x-centered"
+#define MATE_PANEL_TOPLEVEL_Y_CENTERED_KEY    "y-centered"
+
+#include "wayland-display.h"
 
 typedef struct App App;
 typedef struct GrabInfo GrabInfo;
@@ -47,9 +63,11 @@ typedef struct GrabInfo GrabInfo;
 struct App
 {
     MateRRScreen       *screen;
+    MateWaylandDisplay *wl_display;
     MateRRConfig  *current_configuration;
     MateRRLabeler *labeler;
     MateRROutputInfo         *current_output;
+    MateWaylandOutput *current_wl_output;
 
     GtkWidget	   *dialog;
     GtkWidget      *current_monitor_event_box;
@@ -102,6 +120,12 @@ static gboolean output_overlaps (MateRROutputInfo *output, MateRRConfig *config)
 static void select_current_output_from_dialog_position (App *app);
 static void monitor_on_off_toggled_cb (GtkToggleButton *toggle, gpointer data);
 static void apply_configuration_returned_cb (GObject *source_object, GAsyncResult *res, gpointer data);
+static gboolean get_mode (GtkWidget *widget, int *width, int *height, int *freq, MateRRRotation *rot);
+static void wl_output_get_geometry (MateWaylandOutput *output,
+                                    int               *x,
+                                    int               *y,
+                                    int               *w,
+                                    int               *h);
 
 static void
 error_message (App *app, const char *primary_text, const char *secondary_text)
@@ -126,6 +150,284 @@ do_free (gpointer data)
 {
     g_free (data);
     return FALSE;
+}
+
+static gboolean
+settings_schema_exists (const char *schema_id)
+{
+    GSettingsSchemaSource *source;
+    GSettingsSchema *schema;
+
+    source = g_settings_schema_source_get_default ();
+    if (!source)
+        return FALSE;
+
+    schema = g_settings_schema_source_lookup (source, schema_id, TRUE);
+    if (!schema)
+        return FALSE;
+
+    g_settings_schema_unref (schema);
+    return TRUE;
+}
+
+static int
+scale_panel_position (int value,
+                      int source_size,
+                      int target_size)
+{
+    double scaled;
+
+    if (value < 0)
+        return value;
+
+    if (source_size <= 0 || target_size <= 0)
+        return CLAMP (value, 0, MAX (0, target_size));
+
+    scaled = ((double) value * target_size) / source_size;
+    return CLAMP ((int) (scaled + 0.5), 0, target_size);
+}
+
+static MateWaylandOutput *
+wayland_get_enabled_output_for_monitor (App *app,
+                                        int  monitor)
+{
+    GList *l;
+    int enabled_index = 0;
+
+    if (!app->wl_display || monitor < 0)
+        return NULL;
+
+    for (l = app->wl_display->outputs; l != NULL; l = l->next) {
+        MateWaylandOutput *output = l->data;
+
+        if (!output->enabled)
+            continue;
+
+        if (enabled_index == monitor)
+            return output;
+
+        enabled_index++;
+    }
+
+    return NULL;
+}
+
+static gboolean
+get_monitor_geometry (App          *app,
+                      int           monitor,
+                      GdkRectangle *geometry)
+{
+    GdkDisplay *display;
+    GdkMonitor *gdk_monitor;
+    MateWaylandOutput *wl_output;
+
+    if (monitor < 0 || !geometry)
+        return FALSE;
+
+    display = gdk_display_get_default ();
+    if (display && monitor < gdk_display_get_n_monitors (display)) {
+        gdk_monitor = gdk_display_get_monitor (display, monitor);
+        if (gdk_monitor) {
+            gdk_monitor_get_geometry (gdk_monitor, geometry);
+            return TRUE;
+        }
+    }
+
+    if (!app->wl_display)
+        return FALSE;
+
+    wl_output = wayland_get_enabled_output_for_monitor (app, monitor);
+    if (!wl_output)
+        return FALSE;
+
+    wl_output_get_geometry (wl_output,
+                            &geometry->x,
+                            &geometry->y,
+                            &geometry->width,
+                            &geometry->height);
+    return TRUE;
+}
+
+static int
+get_wayland_gdk_monitor_index_for_output (MateWaylandOutput *output)
+{
+    GdkDisplay *display;
+    GdkMonitor *monitor;
+    int x, y, width, height;
+    int i, n_monitors;
+
+    if (!output)
+        return -1;
+
+    wl_output_get_geometry (output, &x, &y, &width, &height);
+
+    display = gdk_display_get_default ();
+    if (!display)
+        return -1;
+
+    monitor = gdk_display_get_monitor_at_point (display,
+                                                x + width / 2,
+                                                y + height / 2);
+    if (!monitor)
+        return -1;
+
+    n_monitors = gdk_display_get_n_monitors (display);
+    for (i = 0; i < n_monitors; i++) {
+        if (gdk_display_get_monitor (display, i) == monitor)
+            return i;
+    }
+
+    return -1;
+}
+
+static int
+get_x11_monitor_index_for_output (MateRROutputInfo *output)
+{
+    GdkDisplay *display;
+    GdkMonitor *monitor;
+    int x, y, width, height;
+    int i, n_monitors;
+
+    if (!output)
+        return -1;
+
+    mate_rr_output_info_get_geometry (output, &x, &y, &width, &height);
+
+    display = gdk_display_get_default ();
+    monitor = gdk_display_get_monitor_at_point (display,
+                                                x + width / 2,
+                                                y + height / 2);
+    if (!monitor)
+        return -1;
+
+    n_monitors = gdk_display_get_n_monitors (display);
+    for (i = 0; i < n_monitors; i++) {
+        if (gdk_display_get_monitor (display, i) == monitor)
+            return i;
+    }
+
+    return -1;
+}
+
+static void
+resize_panel_for_monitor (GSettings          *toplevel_settings,
+                          const GdkRectangle *source_geometry,
+                          const GdkRectangle *target_geometry)
+{
+    gboolean expand;
+    gboolean x_centered;
+    gboolean y_centered;
+    char *orientation;
+    int size;
+    int max_size;
+
+    if (!source_geometry || !target_geometry)
+        return;
+
+    expand = g_settings_get_boolean (toplevel_settings, MATE_PANEL_TOPLEVEL_EXPAND_KEY);
+    if (!expand) {
+        x_centered = g_settings_get_boolean (toplevel_settings, MATE_PANEL_TOPLEVEL_X_CENTERED_KEY);
+        y_centered = g_settings_get_boolean (toplevel_settings, MATE_PANEL_TOPLEVEL_Y_CENTERED_KEY);
+
+        if (!x_centered) {
+            int x = g_settings_get_int (toplevel_settings, MATE_PANEL_TOPLEVEL_X_KEY);
+            int x_right = g_settings_get_int (toplevel_settings, MATE_PANEL_TOPLEVEL_X_RIGHT_KEY);
+
+            if (x_right >= 0)
+                g_settings_set_int (toplevel_settings,
+                                    MATE_PANEL_TOPLEVEL_X_RIGHT_KEY,
+                                    scale_panel_position (x_right,
+                                                          source_geometry->width,
+                                                          target_geometry->width));
+            else
+                g_settings_set_int (toplevel_settings,
+                                    MATE_PANEL_TOPLEVEL_X_KEY,
+                                    scale_panel_position (x,
+                                                          source_geometry->width,
+                                                          target_geometry->width));
+        }
+
+        if (!y_centered) {
+            int y = g_settings_get_int (toplevel_settings, MATE_PANEL_TOPLEVEL_Y_KEY);
+            int y_bottom = g_settings_get_int (toplevel_settings, MATE_PANEL_TOPLEVEL_Y_BOTTOM_KEY);
+
+            if (y_bottom >= 0)
+                g_settings_set_int (toplevel_settings,
+                                    MATE_PANEL_TOPLEVEL_Y_BOTTOM_KEY,
+                                    scale_panel_position (y_bottom,
+                                                          source_geometry->height,
+                                                          target_geometry->height));
+            else
+                g_settings_set_int (toplevel_settings,
+                                    MATE_PANEL_TOPLEVEL_Y_KEY,
+                                    scale_panel_position (y,
+                                                          source_geometry->height,
+                                                          target_geometry->height));
+        }
+    }
+
+    orientation = g_settings_get_string (toplevel_settings, MATE_PANEL_TOPLEVEL_ORIENTATION_KEY);
+    size = g_settings_get_int (toplevel_settings, MATE_PANEL_TOPLEVEL_SIZE_KEY);
+
+    if (g_strcmp0 (orientation, "left") == 0 || g_strcmp0 (orientation, "right") == 0)
+        max_size = MAX (1, target_geometry->width / 4);
+    else
+        max_size = MAX (1, target_geometry->height / 4);
+
+    if (size > max_size)
+        g_settings_set_int (toplevel_settings, MATE_PANEL_TOPLEVEL_SIZE_KEY, max_size);
+
+    g_free (orientation);
+}
+
+static void
+move_existing_panels_to_monitor (App *app,
+                                 int  target_monitor)
+{
+    GSettings *panel_settings;
+    char **toplevel_ids;
+    int i;
+    GdkRectangle target_geometry;
+
+    if (!app || target_monitor < 0)
+        return;
+
+    if (!settings_schema_exists (MATE_PANEL_SCHEMA) ||
+        !settings_schema_exists (MATE_PANEL_TOPLEVEL_SCHEMA))
+        return;
+
+    if (!get_monitor_geometry (app, target_monitor, &target_geometry))
+        return;
+
+    panel_settings = g_settings_new (MATE_PANEL_SCHEMA);
+    toplevel_ids = g_settings_get_strv (panel_settings, MATE_PANEL_TOPLEVEL_ID_LIST_KEY);
+
+    for (i = 0; toplevel_ids && toplevel_ids[i] != NULL; i++) {
+        GSettings *toplevel_settings;
+        char *path;
+        int source_monitor;
+        GdkRectangle source_geometry;
+
+        if (toplevel_ids[i][0] == '\0')
+            continue;
+
+        path = g_strdup_printf (MATE_PANEL_TOPLEVEL_PATH "%s/", toplevel_ids[i]);
+        toplevel_settings = g_settings_new_with_path (MATE_PANEL_TOPLEVEL_SCHEMA, path);
+
+        source_monitor = g_settings_get_int (toplevel_settings, MATE_PANEL_TOPLEVEL_MONITOR_KEY);
+        if (!get_monitor_geometry (app, source_monitor, &source_geometry))
+            source_geometry = target_geometry;
+
+        resize_panel_for_monitor (toplevel_settings, &source_geometry, &target_geometry);
+        g_settings_set_int (toplevel_settings, MATE_PANEL_TOPLEVEL_MONITOR_KEY, target_monitor);
+
+        g_object_unref (toplevel_settings);
+        g_free (path);
+    }
+
+    g_strfreev (toplevel_ids);
+    g_object_unref (panel_settings);
+    g_settings_sync ();
 }
 
 static gchar *
@@ -715,6 +1017,229 @@ make_resolution_string (guint width,
     return g_strdup_printf (_("%u x %u"), width, height);
 }
 
+static char *
+make_wl_rate_string (int mhz)
+{
+    if (mhz <= 0)
+        return g_strdup (_("Unknown"));
+
+    return g_strdup_printf (_("%.2f Hz"), mhz / 1000.0);
+}
+
+static MateWaylandMode *
+wl_output_get_best_mode (MateWaylandOutput *output)
+{
+    GList *l;
+    MateWaylandMode *best = NULL;
+
+    if (!output)
+        return NULL;
+
+    if (output->current_mode)
+        return output->current_mode;
+
+    for (l = output->modes; l != NULL; l = l->next) {
+        MateWaylandMode *mode = l->data;
+
+        if (mode->preferred)
+            return mode;
+
+        if (!best || (mode->width * mode->height) > (best->width * best->height))
+            best = mode;
+    }
+
+    return best;
+}
+
+static void
+wl_output_get_geometry (MateWaylandOutput *output,
+                        int               *x,
+                        int               *y,
+                        int               *w,
+                        int               *h)
+{
+    MateWaylandMode *mode;
+    int width;
+    int height;
+
+    if (x)
+        *x = output->x;
+    if (y)
+        *y = output->y;
+
+    mode = wl_output_get_best_mode (output);
+    width = output->width;
+    height = output->height;
+
+    if ((width == 0 || height == 0) && mode) {
+        width = mode->width;
+        height = mode->height;
+    }
+
+    if (output->transform == WL_OUTPUT_TRANSFORM_90 ||
+        output->transform == WL_OUTPUT_TRANSFORM_270 ||
+        output->transform == WL_OUTPUT_TRANSFORM_FLIPPED_90 ||
+        output->transform == WL_OUTPUT_TRANSFORM_FLIPPED_270) {
+        int tmp = width;
+        width = height;
+        height = tmp;
+    }
+
+    if (w)
+        *w = width;
+    if (h)
+        *h = height;
+}
+
+static int
+wl_count_enabled_outputs (App *app)
+{
+    int count = 0;
+    GList *l;
+
+    for (l = app->wl_display ? app->wl_display->outputs : NULL; l != NULL; l = l->next) {
+        MateWaylandOutput *output = l->data;
+
+        if (output->enabled)
+            count++;
+    }
+
+    return count;
+}
+
+static void
+wl_normalize_positions (App *app)
+{
+    GList *l;
+    int min_x = G_MAXINT;
+    int min_y = G_MAXINT;
+
+    for (l = app->wl_display ? app->wl_display->outputs : NULL; l != NULL; l = l->next) {
+        MateWaylandOutput *output = l->data;
+
+        if (!output->enabled)
+            continue;
+
+        min_x = MIN (min_x, output->x);
+        min_y = MIN (min_y, output->y);
+    }
+
+    if (min_x == G_MAXINT || min_y == G_MAXINT || (min_x == 0 && min_y == 0))
+        return;
+
+    for (l = app->wl_display->outputs; l != NULL; l = l->next) {
+        MateWaylandOutput *output = l->data;
+
+        output->x -= min_x;
+        output->y -= min_y;
+    }
+}
+
+static void
+wl_set_primary_output (App *app,
+                       MateWaylandOutput *primary)
+{
+    GList *l;
+    int dx;
+    int dy;
+
+    if (!primary)
+        return;
+
+    dx = primary->x;
+    dy = primary->y;
+
+    for (l = app->wl_display ? app->wl_display->outputs : NULL; l != NULL; l = l->next) {
+        MateWaylandOutput *output = l->data;
+
+        output->primary = output == primary;
+        output->x -= dx;
+        output->y -= dy;
+    }
+
+    wl_normalize_positions (app);
+}
+
+static MateWaylandOutput *
+wl_get_primary_output (App *app)
+{
+    GList *l;
+
+    for (l = app->wl_display ? app->wl_display->outputs : NULL; l != NULL; l = l->next) {
+        MateWaylandOutput *output = l->data;
+
+        if (output->enabled && output->primary)
+            return output;
+    }
+
+    for (l = app->wl_display ? app->wl_display->outputs : NULL; l != NULL; l = l->next) {
+        MateWaylandOutput *output = l->data;
+
+        if (output->enabled)
+            return output;
+    }
+
+    return app->wl_display && app->wl_display->outputs ? app->wl_display->outputs->data : NULL;
+}
+
+static void
+wl_select_resolution_for_current_output (App *app)
+{
+    MateWaylandMode *mode;
+
+    if (!app->current_wl_output)
+        return;
+
+    mode = wl_output_get_best_mode (app->current_wl_output);
+    if (!mode)
+        return;
+
+    app->current_wl_output->current_mode = mode;
+    app->current_wl_output->width = mode->width;
+    app->current_wl_output->height = mode->height;
+}
+
+static gboolean
+wl_output_description_is_invalid (const char *description)
+{
+    char *lower;
+    gboolean invalid;
+
+    if (!description || description[0] == '\0')
+        return TRUE;
+
+    lower = g_ascii_strdown (description, -1);
+    invalid = strstr (lower, "invalid") != NULL &&
+        (strstr (lower, "vendor") != NULL || strstr (lower, "codename") != NULL);
+    g_free (lower);
+
+    return invalid;
+}
+
+static char *
+wl_output_get_display_name (MateWaylandOutput *output)
+{
+    const char *start;
+    const char *end;
+
+    if (!output)
+        return g_strdup (_("Monitor"));
+
+    if (!wl_output_description_is_invalid (output->description))
+        return g_strdup (output->description);
+
+    start = output->description ? strrchr (output->description, '(') : NULL;
+    end = output->description ? strrchr (output->description, ')') : NULL;
+
+    if (start && end && end > start + 1)
+        return g_strndup (start + 1, end - start - 1);
+
+    if (output->name && output->name[0] != '\0')
+        return g_strdup (output->name);
+
+    return g_strdup (_("Monitor"));
+}
+
 static void
 find_best_mode (MateRRMode **modes,
                 guint       *out_width,
@@ -789,6 +1314,170 @@ rebuild_resolution_combo (App *app)
 }
 
 static void
+rebuild_wayland_rotation_combo (App *app)
+{
+    typedef struct
+    {
+        int transform;
+        const char *name;
+    } TransformInfo;
+    static const TransformInfo transforms[] = {
+        { WL_OUTPUT_TRANSFORM_NORMAL, N_("Normal") },
+        { WL_OUTPUT_TRANSFORM_90, N_("Left") },
+        { WL_OUTPUT_TRANSFORM_270, N_("Right") },
+        { WL_OUTPUT_TRANSFORM_180, N_("Upside Down") },
+    };
+    guint i;
+    const char *selection = NULL;
+
+    clear_combo (app->rotation_combo);
+
+    gtk_widget_set_sensitive (app->rotation_combo,
+                              app->current_wl_output && app->current_wl_output->enabled);
+
+    if (!app->current_wl_output)
+        return;
+
+    for (i = 0; i < G_N_ELEMENTS (transforms); i++) {
+        add_key (app->rotation_combo, _(transforms[i].name), 0, 0, 0, transforms[i].transform);
+
+        if (app->current_wl_output->transform == transforms[i].transform)
+            selection = _(transforms[i].name);
+    }
+
+    combo_select (app->rotation_combo, selection ? selection : _("Normal"));
+}
+
+static void
+rebuild_wayland_rate_combo (App *app)
+{
+    GList *l;
+    MateWaylandMode *current;
+
+    clear_combo (app->refresh_combo);
+    gtk_widget_set_sensitive (app->refresh_combo,
+                              app->current_wl_output && app->current_wl_output->enabled);
+
+    if (!app->current_wl_output)
+        return;
+
+    current = wl_output_get_best_mode (app->current_wl_output);
+
+    for (l = app->current_wl_output->modes; l != NULL; l = l->next) {
+        MateWaylandMode *mode = l->data;
+
+        if (!current || mode->width != current->width || mode->height != current->height)
+            continue;
+
+        add_key (app->refresh_combo,
+                 idle_free (make_wl_rate_string (mode->refresh)),
+                 0, 0, mode->refresh, -1);
+    }
+
+    if (current)
+        combo_select (app->refresh_combo, idle_free (make_wl_rate_string (current->refresh)));
+}
+
+static void
+rebuild_wayland_resolution_combo (App *app)
+{
+    GList *l;
+    MateWaylandMode *current;
+
+    clear_combo (app->resolution_combo);
+    gtk_widget_set_sensitive (app->resolution_combo,
+                              app->current_wl_output && app->current_wl_output->enabled);
+
+    if (!app->current_wl_output)
+        return;
+
+    current = wl_output_get_best_mode (app->current_wl_output);
+
+    for (l = app->current_wl_output->modes; l != NULL; l = l->next) {
+        MateWaylandMode *mode = l->data;
+
+        add_key (app->resolution_combo,
+                 idle_free (make_resolution_string (mode->width, mode->height)),
+                 mode->width, mode->height, 0, -1);
+    }
+
+    if (current) {
+        combo_select (app->resolution_combo,
+                      idle_free (make_resolution_string (current->width, current->height)));
+    }
+}
+
+static void
+rebuild_wayland_current_monitor_label (App *app)
+{
+    char *str;
+    char *name = NULL;
+
+    if (app->current_wl_output) {
+        name = wl_output_get_display_name (app->current_wl_output);
+        str = g_strdup_printf ("<b>%s</b>", name);
+    } else {
+        str = g_strdup_printf ("<b>%s</b>", _("Monitor"));
+    }
+
+    gtk_label_set_markup (GTK_LABEL (app->current_monitor_label), str);
+    gtk_event_box_set_visible_window (GTK_EVENT_BOX (app->current_monitor_event_box),
+                                      app->current_wl_output != NULL);
+    g_free (name);
+    g_free (str);
+}
+
+static void
+rebuild_wayland_on_off_radios (App *app)
+{
+    gboolean sensitive;
+    gboolean on_active;
+
+    g_signal_handlers_block_by_func (app->monitor_on_radio, G_CALLBACK (monitor_on_off_toggled_cb), app);
+    g_signal_handlers_block_by_func (app->monitor_off_radio, G_CALLBACK (monitor_on_off_toggled_cb), app);
+
+    sensitive = app->current_wl_output &&
+        (wl_count_enabled_outputs (app) > 1 || !app->current_wl_output->enabled);
+    on_active = app->current_wl_output && app->current_wl_output->enabled;
+
+    gtk_widget_set_sensitive (app->monitor_on_radio, sensitive);
+    gtk_widget_set_sensitive (app->monitor_off_radio, sensitive);
+    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (app->monitor_on_radio), on_active);
+    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (app->monitor_off_radio), !on_active);
+
+    g_signal_handlers_unblock_by_func (app->monitor_on_radio, G_CALLBACK (monitor_on_off_toggled_cb), app);
+    g_signal_handlers_unblock_by_func (app->monitor_off_radio, G_CALLBACK (monitor_on_off_toggled_cb), app);
+}
+
+static void
+rebuild_wayland_gui (App *app)
+{
+    gboolean sensitive;
+
+    if (!app->current_wl_output && app->wl_display && app->wl_display->outputs)
+        app->current_wl_output = wl_get_primary_output (app);
+
+    sensitive = app->current_wl_output != NULL;
+
+    rebuild_scale_window (app);
+    rebuild_wayland_current_monitor_label (app);
+    rebuild_wayland_on_off_radios (app);
+    rebuild_wayland_resolution_combo (app);
+    rebuild_wayland_rate_combo (app);
+    rebuild_wayland_rotation_combo (app);
+
+    gtk_widget_set_sensitive (app->clone_checkbox, FALSE);
+    gtk_widget_set_sensitive (app->panel_checkbox, sensitive);
+    gtk_widget_set_sensitive (app->primary_button,
+                              app->current_wl_output && !app->current_wl_output->primary);
+    gtk_widget_set_sensitive (app->apply_button,
+                              app->wl_display && app->wl_display->output_manager);
+    gtk_widget_set_sensitive (app->detect_controls_hbox, FALSE);
+    gtk_widget_set_sensitive (app->panel_icon_vbox, FALSE);
+    gtk_widget_set_sensitive (app->area, app->wl_display && app->wl_display->outputs);
+}
+
+static void
 rebuild_gui (App *app)
 {
     gboolean sensitive;
@@ -801,13 +1490,7 @@ rebuild_gui (App *app)
     app->ignore_gui_changes = TRUE;
 
     if (app->screen == NULL) {
-        rebuild_scale_window (app);
-        if (app->monitor_settings_grid) gtk_widget_set_sensitive (app->monitor_settings_grid, FALSE);
-        if (app->area) gtk_widget_set_sensitive (app->area, FALSE);
-        if (app->detect_controls_hbox) gtk_widget_set_sensitive (app->detect_controls_hbox, FALSE);
-        if (app->panel_icon_vbox) gtk_widget_set_sensitive (app->panel_icon_vbox, FALSE);
-        if (app->apply_button) gtk_widget_set_sensitive (app->apply_button, FALSE);
-        if (app->primary_button) gtk_widget_set_sensitive (app->primary_button, FALSE);
+        rebuild_wayland_gui (app);
         app->ignore_gui_changes = FALSE;
         return;
     }
@@ -877,6 +1560,20 @@ on_rotation_changed (GtkComboBox *box, gpointer data)
     App *app = data;
     MateRRRotation rotation;
 
+    if (app->ignore_gui_changes)
+        return;
+
+    if (app->wl_display) {
+        if (!app->current_wl_output)
+            return;
+
+        if (get_mode (app->rotation_combo, NULL, NULL, NULL, &rotation))
+            app->current_wl_output->transform = rotation;
+
+        foo_scroll_area_invalidate (FOO_SCROLL_AREA (app->area));
+        return;
+    }
+
     if (!app->current_output)
 	return;
 
@@ -891,6 +1588,39 @@ on_rate_changed (GtkComboBox *box, gpointer data)
 {
     App *app = data;
     int rate;
+
+    if (app->ignore_gui_changes)
+        return;
+
+    if (app->wl_display) {
+        GList *l;
+
+        if (!app->current_wl_output)
+            return;
+
+        if (!get_mode (app->refresh_combo, NULL, NULL, &rate, NULL))
+            return;
+
+        for (l = app->current_wl_output->modes; l != NULL; l = l->next) {
+            MateWaylandMode *mode = l->data;
+
+            if (app->current_wl_output->current_mode &&
+                mode->width != app->current_wl_output->current_mode->width)
+                continue;
+            if (app->current_wl_output->current_mode &&
+                mode->height != app->current_wl_output->current_mode->height)
+                continue;
+            if (mode->refresh == rate) {
+                app->current_wl_output->current_mode = mode;
+                app->current_wl_output->width = mode->width;
+                app->current_wl_output->height = mode->height;
+                break;
+            }
+        }
+
+        foo_scroll_area_invalidate (FOO_SCROLL_AREA (app->area));
+        return;
+    }
 
     if (!app->current_output)
 	return;
@@ -933,6 +1663,32 @@ monitor_on_off_toggled_cb (GtkToggleButton *toggle, gpointer data)
 {
     App *app = data;
     gboolean is_on;
+
+    if (app->ignore_gui_changes)
+        return;
+
+    if (app->wl_display) {
+        if (!app->current_wl_output)
+            return;
+
+        if (!gtk_toggle_button_get_active (toggle))
+            return;
+
+        if (GTK_WIDGET (toggle) == app->monitor_on_radio)
+            is_on = TRUE;
+        else if (GTK_WIDGET (toggle) == app->monitor_off_radio)
+            is_on = FALSE;
+        else
+            return;
+
+        app->current_wl_output->enabled = is_on;
+        if (is_on)
+            wl_select_resolution_for_current_output (app);
+
+        rebuild_gui (app);
+        foo_scroll_area_invalidate (FOO_SCROLL_AREA (app->area));
+        return;
+    }
 
     if (!app->current_output)
 	return;
@@ -1021,6 +1777,35 @@ on_resolution_changed (GtkComboBox *box, gpointer data)
     int width;
     int height;
 
+    if (app->ignore_gui_changes)
+        return;
+
+    if (app->wl_display) {
+        GList *l;
+
+        if (!app->current_wl_output)
+            return;
+
+        if (get_mode (app->resolution_combo, &width, &height, NULL, NULL)) {
+            for (l = app->current_wl_output->modes; l != NULL; l = l->next) {
+                MateWaylandMode *mode = l->data;
+
+                if (mode->width == width && mode->height == height) {
+                    app->current_wl_output->current_mode = mode;
+                    app->current_wl_output->width = width;
+                    app->current_wl_output->height = height;
+                    app->current_wl_output->enabled = TRUE;
+                    break;
+                }
+            }
+        }
+
+        rebuild_wayland_rate_combo (app);
+        rebuild_wayland_rotation_combo (app);
+        foo_scroll_area_invalidate (FOO_SCROLL_AREA (app->area));
+        return;
+    }
+
     if (!app->current_output)
 	return;
 
@@ -1091,6 +1876,9 @@ static void
 on_clone_changed (GtkWidget *box, gpointer data)
 {
     App *app = data;
+
+    if (app->wl_display)
+        return;
 
     mate_rr_config_set_clone (app->current_configuration, gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (app->clone_checkbox)));
 
@@ -1590,6 +2378,228 @@ set_monitors_tooltip (App *app, gboolean is_dragging)
 }
 
 static void
+wl_compute_bounds (App *app,
+                   int *ret_min_x,
+                   int *ret_min_y,
+                   int *ret_width,
+                   int *ret_height)
+{
+    GList *l;
+    int min_x = G_MAXINT;
+    int min_y = G_MAXINT;
+    int max_x = 0;
+    int max_y = 0;
+
+    for (l = app->wl_display ? app->wl_display->outputs : NULL; l != NULL; l = l->next) {
+        MateWaylandOutput *output = l->data;
+        int x, y, w, h;
+
+        wl_output_get_geometry (output, &x, &y, &w, &h);
+        min_x = MIN (min_x, x);
+        min_y = MIN (min_y, y);
+        max_x = MAX (max_x, x + w);
+        max_y = MAX (max_y, y + h);
+    }
+
+    if (min_x == G_MAXINT) {
+        min_x = 0;
+        min_y = 0;
+    }
+
+    if (ret_min_x)
+        *ret_min_x = min_x;
+    if (ret_min_y)
+        *ret_min_y = min_y;
+    if (ret_width)
+        *ret_width = MAX (1, max_x - min_x);
+    if (ret_height)
+        *ret_height = MAX (1, max_y - min_y);
+}
+
+static double
+wl_compute_scale (App *app)
+{
+    int total_w;
+    int total_h;
+    GdkRectangle viewport;
+
+    foo_scroll_area_get_viewport (FOO_SCROLL_AREA (app->area), &viewport);
+    wl_compute_bounds (app, NULL, NULL, &total_w, &total_h);
+
+    return MIN ((double)(viewport.width - 2 * MARGIN) / total_w,
+                (double)(viewport.height - 2 * MARGIN) / total_h);
+}
+
+static gboolean
+wl_get_output_rect_on_canvas (App *app,
+                              MateWaylandOutput *output,
+                              GdkRectangle *rect)
+{
+    int min_x, min_y, total_w, total_h;
+    int output_x, output_y, output_w, output_h;
+    GdkRectangle viewport;
+    double scale;
+
+    if (!output)
+        return FALSE;
+
+    foo_scroll_area_get_viewport (FOO_SCROLL_AREA (app->area), &viewport);
+    wl_compute_bounds (app, &min_x, &min_y, &total_w, &total_h);
+    wl_output_get_geometry (output, &output_x, &output_y, &output_w, &output_h);
+    scale = wl_compute_scale (app);
+
+    rect->x = (output_x - min_x) * scale + MARGIN + (viewport.width - total_w * scale) / 2.0;
+    rect->y = (output_y - min_y) * scale + MARGIN + (viewport.height - total_h * scale) / 2.0;
+    rect->width = output_w * scale + 0.5;
+    rect->height = output_h * scale + 0.5;
+
+    return TRUE;
+}
+
+static int
+wl_distance_squared_to_output (MateWaylandOutput *output,
+                               int                center_x,
+                               int                center_y)
+{
+    int x, y, w, h;
+    int output_center_x;
+    int output_center_y;
+    int dx;
+    int dy;
+
+    wl_output_get_geometry (output, &x, &y, &w, &h);
+
+    output_center_x = x + w / 2;
+    output_center_y = y + h / 2;
+    dx = center_x - output_center_x;
+    dy = center_y - output_center_y;
+
+    return dx * dx + dy * dy;
+}
+
+static MateWaylandOutput *
+wl_get_nearest_enabled_output (App               *app,
+                               MateWaylandOutput *dragged,
+                               int                center_x,
+                               int                center_y)
+{
+    MateWaylandOutput *nearest = NULL;
+    int nearest_distance = G_MAXINT;
+    GList *l;
+
+    for (l = app->wl_display ? app->wl_display->outputs : NULL; l != NULL; l = l->next) {
+        MateWaylandOutput *output = l->data;
+        int distance;
+
+        if (output == dragged || !output->enabled)
+            continue;
+
+        distance = wl_distance_squared_to_output (output, center_x, center_y);
+        if (distance < nearest_distance) {
+            nearest = output;
+            nearest_distance = distance;
+        }
+    }
+
+    return nearest;
+}
+
+static void
+wl_snap_output_to_neighbor (App               *app,
+                            MateWaylandOutput *output)
+{
+    MateWaylandOutput *neighbor;
+    int x, y, w, h;
+    int nx, ny, nw, nh;
+    int center_x;
+    int center_y;
+    int neighbor_center_x;
+    int neighbor_center_y;
+    int dx;
+    int dy;
+
+    if (!output || !output->enabled || wl_count_enabled_outputs (app) < 2)
+        return;
+
+    wl_output_get_geometry (output, &x, &y, &w, &h);
+    center_x = x + w / 2;
+    center_y = y + h / 2;
+
+    neighbor = wl_get_nearest_enabled_output (app, output, center_x, center_y);
+    if (!neighbor)
+        return;
+
+    wl_output_get_geometry (neighbor, &nx, &ny, &nw, &nh);
+    neighbor_center_x = nx + nw / 2;
+    neighbor_center_y = ny + nh / 2;
+    dx = center_x - neighbor_center_x;
+    dy = center_y - neighbor_center_y;
+
+    if (ABS (dx) >= ABS (dy)) {
+        output->x = dx < 0 ? nx - w : nx + nw;
+        output->y = CLAMP (y, ny - h + 1, ny + nh - 1);
+    } else {
+        output->x = CLAMP (x, nx - w + 1, nx + nw - 1);
+        output->y = dy < 0 ? ny - h : ny + nh;
+    }
+}
+
+static void
+on_wl_output_event (FooScrollArea      *area,
+                    FooScrollAreaEvent *event,
+                    gpointer            data)
+{
+    MateWaylandOutput *output = data;
+    App *app = g_object_get_data (G_OBJECT (area), "app");
+
+    if (wl_count_enabled_outputs (app) > 1)
+        set_cursor (GTK_WIDGET (area), GDK_FLEUR);
+
+    if (event->type == FOO_BUTTON_PRESS) {
+        GrabInfo *info;
+
+        app->current_wl_output = output;
+        app->current_output = NULL;
+        rebuild_gui (app);
+        set_monitors_tooltip (app, TRUE);
+
+        if (wl_count_enabled_outputs (app) > 1) {
+            foo_scroll_area_begin_grab (area, on_wl_output_event, data);
+
+            info = g_new0 (GrabInfo, 1);
+            info->grab_x = event->x;
+            info->grab_y = event->y;
+            info->output_x = output->x;
+            info->output_y = output->y;
+            g_object_set_data (G_OBJECT (area), "wl-grab-info", info);
+        }
+
+        foo_scroll_area_invalidate (area);
+    } else if (foo_scroll_area_is_grabbed (area)) {
+        GrabInfo *info = g_object_get_data (G_OBJECT (area), "wl-grab-info");
+        double scale = wl_compute_scale (app);
+
+        if (info && scale > 0) {
+            output->x = info->output_x + (int) ((double)(event->x - info->grab_x) / scale);
+            output->y = info->output_y + (int) ((double)(event->y - info->grab_y) / scale);
+            wl_snap_output_to_neighbor (app, output);
+        }
+
+        if (event->type == FOO_BUTTON_RELEASE) {
+            wl_snap_output_to_neighbor (app, output);
+            wl_normalize_positions (app);
+            foo_scroll_area_end_grab (area);
+            set_monitors_tooltip (app, FALSE);
+            g_free (info);
+            g_object_set_data (G_OBJECT (area), "wl-grab-info", NULL);
+        }
+
+        foo_scroll_area_invalidate (area);
+    }
+
+}
+
+static void
 on_output_event (FooScrollArea      *area,
                  FooScrollAreaEvent *event,
                  gpointer            data)
@@ -1701,6 +2711,73 @@ on_output_event (FooScrollArea      *area,
 	    foo_scroll_area_invalidate (area);
 	}
     }
+}
+
+static void
+paint_wl_output (App *app,
+                 cairo_t *cr,
+                 MateWaylandOutput *output)
+{
+    GdkRectangle rect;
+    PangoLayout *layout;
+    PangoRectangle ink_extent, log_extent;
+    char *display_name;
+    char *text;
+    double factor;
+    double available_w;
+
+    if (!wl_get_output_rect_on_canvas (app, output, &rect))
+        return;
+
+    cairo_save (cr);
+    cairo_rectangle (cr, rect.x, rect.y, rect.width, rect.height);
+    cairo_clip_preserve (cr);
+
+    if (output->enabled)
+        cairo_set_source_rgba (cr, 0.55, 0.68, 0.86, 1.0);
+    else
+        cairo_set_source_rgba (cr, 0.18, 0.22, 0.28, 1.0);
+
+    foo_scroll_area_add_input_from_fill (FOO_SCROLL_AREA (app->area),
+                                         cr, on_wl_output_event, output);
+    cairo_fill (cr);
+
+    if (output == app->current_wl_output) {
+        cairo_rectangle (cr, rect.x + 2, rect.y + 2, rect.width - 4, rect.height - 4);
+        cairo_set_line_width (cr, 4);
+        cairo_set_source_rgba (cr, 0.33, 0.43, 0.57, 1.0);
+        cairo_stroke (cr);
+    }
+
+    cairo_rectangle (cr, rect.x + 0.5, rect.y + 0.5, rect.width - 1, rect.height - 1);
+    cairo_set_line_width (cr, 1);
+    cairo_set_source_rgba (cr, 0.0, 0.0, 0.0, 1.0);
+    cairo_stroke (cr);
+
+    display_name = wl_output_get_display_name (output);
+    text = g_strdup_printf ("<b>%s</b>\n<small>%s</small>",
+                            display_name,
+                            output->primary ? _("Primary") : (output->name ? output->name : ""));
+    layout = gtk_widget_create_pango_layout (GTK_WIDGET (app->area), text);
+    pango_layout_set_markup (layout, text, -1);
+    pango_layout_set_alignment (layout, PANGO_ALIGN_CENTER);
+    layout_set_font (layout, "Sans 12");
+    pango_layout_get_pixel_extents (layout, &ink_extent, &log_extent);
+
+    available_w = rect.width - 6;
+    factor = available_w < ink_extent.width ? available_w / ink_extent.width : 1.0;
+
+    cairo_move_to (cr,
+                   rect.x + (rect.width - factor * log_extent.width) / 2,
+                   rect.y + (rect.height - factor * log_extent.height) / 2);
+    cairo_scale (cr, factor, factor);
+    cairo_set_source_rgb (cr, output->enabled ? 0.0 : 1.0, output->enabled ? 0.0 : 1.0, output->enabled ? 0.0 : 1.0);
+    pango_cairo_show_layout (cr, layout);
+
+    g_object_unref (layout);
+    g_free (display_name);
+    g_free (text);
+    cairo_restore (cr);
 }
 
 static void
@@ -1925,6 +3002,12 @@ on_area_paint (FooScrollArea *area,
     GList *list;
 
     paint_background (area, cr);
+
+    if (app->wl_display) {
+        for (list = app->wl_display->outputs; list != NULL; list = list->next)
+            paint_wl_output (app, cr, list->data);
+        return;
+    }
 
     if (!app->current_configuration)
 	return;
@@ -2194,6 +3277,12 @@ apply (App *app)
 {
     GError *error = NULL;
 
+    if (app->wl_display) {
+        wl_normalize_positions (app);
+        mate_wayland_display_apply (app->wl_display);
+        return;
+    }
+
     if (!sanitize_and_save_configuration (app))
 	return;
 
@@ -2218,6 +3307,9 @@ on_detect_displays (GtkWidget *widget, gpointer data)
     App *app = data;
     GError *error;
 
+    if (!app->screen)
+        return;
+
     error = NULL;
     if (!mate_rr_screen_refresh (app->screen, &error)) {
 	if (error) {
@@ -2234,6 +3326,16 @@ set_primary (GtkWidget *widget, gpointer data)
     int i;
     MateRROutputInfo **outputs;
 
+    if (app->wl_display) {
+        int monitor = get_wayland_gdk_monitor_index_for_output (app->current_wl_output);
+
+        wl_set_primary_output (app, app->current_wl_output);
+        move_existing_panels_to_monitor (app, monitor);
+        rebuild_gui (app);
+        foo_scroll_area_invalidate (FOO_SCROLL_AREA (app->area));
+        return;
+    }
+
     if (!app->current_output)
         return;
 
@@ -2241,6 +3343,8 @@ set_primary (GtkWidget *widget, gpointer data)
     for (i=0; outputs[i]!=NULL; i++) {
         mate_rr_output_info_set_primary (outputs[i], outputs[i] == app->current_output);
     }
+
+    move_existing_panels_to_monitor (app, get_x11_monitor_index_for_output (app->current_output));
 
     gtk_widget_set_sensitive (app->primary_button, !mate_rr_output_info_get_primary(app->current_output));
 }
@@ -2493,6 +3597,14 @@ run_application (App *app)
         }
     } else {
         app->screen = NULL;
+        app->wl_display = mate_wayland_display_new ();
+        if (!app->wl_display || !app->wl_display->output_manager) {
+            error_message (NULL,
+                           _("Could not get screen information"),
+                           _("The Wayland compositor does not support wlr-output-management-unstable-v1."));
+            g_object_unref (builder);
+            return;
+        }
     }
 
     app->settings = g_settings_new (MSD_XRANDR_SCHEMA);
@@ -2589,7 +3701,10 @@ run_application (App *app)
     g_signal_connect (app->apply_button, "clicked",
 		      G_CALLBACK (apply_button_clicked_cb), app);
 
-    on_screen_changed (app->screen, app);
+    if (app->screen)
+        on_screen_changed (app->screen, app);
+    else
+        rebuild_gui (app);
 
     g_object_unref (builder);
 
@@ -2631,6 +3746,7 @@ restart:
 
     gtk_widget_destroy (app->dialog);
     if (app->screen) g_object_unref (app->screen);
+    if (app->wl_display) mate_wayland_display_free (app->wl_display);
     if (app->settings) g_object_unref (app->settings);
     if (app->scale_settings) g_object_unref (app->scale_settings);
 }
@@ -2645,7 +3761,7 @@ main (int argc, char **argv)
 
     display = gdk_display_get_default ();
     if (!GDK_IS_X11_DISPLAY (display)) {
-        g_warning ("Display settings: monitor configuration is not yet supported on Wayland.");
+        g_debug ("Display settings: using Wayland output management.");
     }
 
     app = g_new0 (App, 1);
