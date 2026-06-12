@@ -67,6 +67,10 @@ struct App
     GtkWidget	   *show_icon_checkbox;
     GtkWidget      *primary_button;
 
+    GtkWidget      *monitor_settings_grid;
+    GtkWidget      *detect_controls_hbox;
+    GtkWidget      *panel_icon_vbox;
+
     /* We store the event timestamp when the Apply button is clicked */
     GtkWidget      *apply_button;
     guint32         apply_button_clicked_timestamp;
@@ -136,10 +140,12 @@ static void
 on_screen_changed (MateRRScreen *scr,
 		   gpointer data)
 {
-    MateRRConfig *current;
+    MateRRConfig *current = NULL;
     App *app = data;
 
-    current = mate_rr_config_new_current (app->screen, NULL);
+    if (app->screen) {
+        current = mate_rr_config_new_current (app->screen, NULL);
+    }
 
     if (app->current_configuration)
 	g_object_unref (app->current_configuration);
@@ -150,11 +156,15 @@ on_screen_changed (MateRRScreen *scr,
     if (app->labeler) {
 	mate_rr_labeler_hide (app->labeler);
 	g_object_unref (app->labeler);
+        app->labeler = NULL;
     }
 
-    app->labeler = mate_rr_labeler_new (app->current_configuration);
+    if (app->current_configuration) {
+        app->labeler = mate_rr_labeler_new (app->current_configuration);
+        select_current_output_from_dialog_position (app);
+    }
 
-    select_current_output_from_dialog_position (app);
+    rebuild_gui (app);
 }
 
 static void
@@ -789,6 +799,18 @@ rebuild_gui (App *app)
     g_assert (app->ignore_gui_changes == FALSE);
 
     app->ignore_gui_changes = TRUE;
+
+    if (app->screen == NULL) {
+        rebuild_scale_window (app);
+        if (app->monitor_settings_grid) gtk_widget_set_sensitive (app->monitor_settings_grid, FALSE);
+        if (app->area) gtk_widget_set_sensitive (app->area, FALSE);
+        if (app->detect_controls_hbox) gtk_widget_set_sensitive (app->detect_controls_hbox, FALSE);
+        if (app->panel_icon_vbox) gtk_widget_set_sensitive (app->panel_icon_vbox, FALSE);
+        if (app->apply_button) gtk_widget_set_sensitive (app->apply_button, FALSE);
+        if (app->primary_button) gtk_widget_set_sensitive (app->primary_button, FALSE);
+        app->ignore_gui_changes = FALSE;
+        return;
+    }
 
     sensitive = app->current_output ? TRUE : FALSE;
 
@@ -2338,7 +2360,7 @@ get_output_for_window (MateRRConfig *configuration, GdkWindow *window)
 static void
 select_current_output_from_dialog_position (App *app)
 {
-    if (gtk_widget_get_realized (app->dialog))
+    if (gtk_widget_get_realized (app->dialog) && app->current_configuration)
 	app->current_output = get_output_for_window (app->current_configuration, gtk_widget_get_window (app->dialog));
     else
 	app->current_output = NULL;
@@ -2459,14 +2481,18 @@ run_application (App *app)
 
     builder = gtk_builder_new_from_resource ("/org/mate/mcc/display/display-capplet.ui");
 
-    app->screen = mate_rr_screen_new (gdk_screen_get_default (), &error);
-    g_signal_connect (app->screen, "changed", G_CALLBACK (on_screen_changed), app);
-    if (!app->screen)
-    {
-	error_message (NULL, _("Could not get screen information"), error->message);
-	g_error_free (error);
-	g_object_unref (builder);
-	return;
+    if (GDK_IS_X11_DISPLAY (gdk_display_get_default ())) {
+        app->screen = mate_rr_screen_new (gdk_screen_get_default (), &error);
+        if (app->screen) {
+            g_signal_connect (app->screen, "changed", G_CALLBACK (on_screen_changed), app);
+        } else {
+            error_message (NULL, _("Could not get screen information"), error->message);
+            g_error_free (error);
+            g_object_unref (builder);
+            return;
+        }
+    } else {
+        app->screen = NULL;
     }
 
     app->settings = g_settings_new (MSD_XRANDR_SCHEMA);
@@ -2517,6 +2543,10 @@ run_application (App *app)
 		      "clicked", G_CALLBACK (on_detect_displays), app);
 
     app->primary_button = _gtk_builder_get_widget (builder, "primary_button");
+
+    app->monitor_settings_grid = _gtk_builder_get_widget (builder, "table1");
+    app->detect_controls_hbox = _gtk_builder_get_widget (builder, "hbox1");
+    app->panel_icon_vbox = _gtk_builder_get_widget (builder, "vbox4");
 
     g_signal_connect (app->primary_button, "clicked", G_CALLBACK (set_primary), app);
 
@@ -2600,9 +2630,9 @@ restart:
     }
 
     gtk_widget_destroy (app->dialog);
-    g_object_unref (app->screen);
-    g_object_unref (app->settings);
-    g_object_unref (app->scale_settings);
+    if (app->screen) g_object_unref (app->screen);
+    if (app->settings) g_object_unref (app->settings);
+    if (app->scale_settings) g_object_unref (app->scale_settings);
 }
 
 int
@@ -2615,15 +2645,7 @@ main (int argc, char **argv)
 
     display = gdk_display_get_default ();
     if (!GDK_IS_X11_DISPLAY (display)) {
-        GtkWidget *dialog;
-        dialog = gtk_message_dialog_new (NULL,
-                                         GTK_DIALOG_MODAL,
-                                         GTK_MESSAGE_INFO,
-                                         GTK_BUTTONS_OK,
-                                         _("Display settings are not yet supported on Wayland."));
-        gtk_dialog_run (GTK_DIALOG (dialog));
-        gtk_widget_destroy (dialog);
-        return 0;
+        g_warning ("Display settings: monitor configuration is not yet supported on Wayland.");
     }
 
     app = g_new0 (App, 1);

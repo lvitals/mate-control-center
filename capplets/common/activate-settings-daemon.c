@@ -3,6 +3,7 @@
 #endif
 
 #include <gtk/gtk.h>
+#include <gdk/gdkx.h>
 #include <glib/gi18n.h>
 #include <gio/gio.h>
 #include "activate-settings-daemon.h"
@@ -51,8 +52,16 @@ activate_settings_daemon (void)
                                 NULL,
                                 &error);
   if (ret == NULL) {
+    if (!GDK_IS_X11_DISPLAY (gdk_display_get_default ())) {
+      g_spawn_command_line_async ("mate-settings-daemon", NULL);
+      g_warning ("Unable to start the settings manager 'mate-settings-daemon' via DBus. Attempted manual start.");
+      g_error_free (error);
+      g_object_unref (proxy);
+      return TRUE;
+    }
     popup_error_message ();
     g_error_free (error);
+    g_object_unref (proxy);
     return FALSE;
   } else {
     g_variant_get (ret, "()");
