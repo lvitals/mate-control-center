@@ -128,7 +128,11 @@ static void wl_output_get_geometry (MateWaylandOutput *output,
                                     int               *y,
                                     int               *w,
                                     int               *h);
+static MateWaylandMode *wl_output_get_best_mode (MateWaylandOutput *output);
 static char *wl_output_get_display_name (MateWaylandOutput *output);
+static int round_to_int (double value);
+static void wl_normalize_positions (App *app);
+static void apply_wayland_scale_setting (App *app);
 
 static void
 error_message (App *app, const char *primary_text, const char *secondary_text)
@@ -857,6 +861,9 @@ on_scale_btn_active_changed_cb (GtkWidget *widget,
 
     scale = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (widget), "scale"));
     g_settings_set_int (app->scale_settings, WINDOW_SCALE_KEY, scale);
+
+    if (app->wl_display)
+        apply_wayland_scale_setting (app);
 }
 
 static void
@@ -874,7 +881,7 @@ rebuild_scale_window (App *app)
     gtk_container_set_border_width (GTK_CONTAINER (app->scale_bbox), 6);
     gtk_container_add (GTK_CONTAINER (app->scale_vbox), app->scale_bbox);
 
-    scale = g_settings_get_int (app->scale_settings, WINDOW_SCALE_KEY);
+    scale = CLAMP (g_settings_get_int (app->scale_settings, WINDOW_SCALE_KEY), 0, 2);
 
     for (i = 0; button_label[i] != NULL; i++)
     {
@@ -1309,6 +1316,11 @@ wl_output_get_geometry (MateWaylandOutput *output,
         height = tmp;
     }
 
+    if (output->scale > 0.0) {
+        width = MAX (1, round_to_int ((double) width / output->scale));
+        height = MAX (1, round_to_int ((double) height / output->scale));
+    }
+
     if (w)
         *w = width;
     if (h)
@@ -1329,6 +1341,101 @@ wl_count_enabled_outputs (App *app)
     }
 
     return count;
+}
+
+static int
+round_to_int (double value)
+{
+    return (int) (value >= 0.0 ? value + 0.5 : value - 0.5);
+}
+
+static int
+wl_output_get_auto_scale (MateWaylandOutput *output)
+{
+    MateWaylandMode *mode;
+    int width;
+    int height;
+    double dpi_x;
+    double dpi_y;
+
+    if (!output)
+        return 1;
+
+    mode = wl_output_get_best_mode (output);
+    width = output->width;
+    height = output->height;
+
+    if ((width <= 0 || height <= 0) && mode) {
+        width = mode->width;
+        height = mode->height;
+    }
+
+    if (width <= 0 || height <= 0)
+        return 1;
+
+    if (output->phys_width > 0 && output->phys_height > 0) {
+        dpi_x = (double) width * 25.4 / output->phys_width;
+        dpi_y = (double) height * 25.4 / output->phys_height;
+
+        if (MAX (dpi_x, dpi_y) >= 192.0)
+            return 2;
+    }
+
+    if (width >= 3840 && height >= 2160)
+        return 2;
+
+    return 1;
+}
+
+static double
+wl_output_get_scale_for_setting (MateWaylandOutput *output,
+                                 int                scale_setting)
+{
+    if (scale_setting == 0)
+        return wl_output_get_auto_scale (output);
+
+    if (scale_setting == 2)
+        return 2.0;
+
+    return 1.0;
+}
+
+static void
+apply_wayland_scale_setting (App *app)
+{
+    GList *l;
+    int scale_setting;
+    gboolean changed = FALSE;
+
+    if (!app->wl_display)
+        return;
+
+    scale_setting = CLAMP (g_settings_get_int (app->scale_settings, WINDOW_SCALE_KEY), 0, 2);
+
+    for (l = app->wl_display->outputs; l != NULL; l = l->next) {
+        MateWaylandOutput *output = l->data;
+        double old_scale;
+        double new_scale;
+
+        if (!output->enabled)
+            continue;
+
+        old_scale = output->scale > 0.0 ? output->scale : 1.0;
+        new_scale = wl_output_get_scale_for_setting (output, scale_setting);
+
+        if (ABS (old_scale - new_scale) < 0.001)
+            continue;
+
+        output->x = round_to_int ((double) output->x * old_scale / new_scale);
+        output->y = round_to_int ((double) output->y * old_scale / new_scale);
+        output->scale = new_scale;
+        changed = TRUE;
+    }
+
+    if (changed) {
+        wl_normalize_positions (app);
+        foo_scroll_area_invalidate (FOO_SCROLL_AREA (app->area));
+    }
 }
 
 static void
@@ -1684,6 +1791,7 @@ rebuild_wayland_gui (App *app)
     sensitive = app->current_wl_output != NULL;
 
     rebuild_scale_window (app);
+    apply_wayland_scale_setting (app);
     rebuild_wayland_current_monitor_label (app);
     rebuild_wayland_on_off_radios (app);
     rebuild_wayland_resolution_combo (app);
