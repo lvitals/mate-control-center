@@ -131,6 +131,8 @@ static void wl_output_get_geometry (MateWaylandOutput *output,
 static MateWaylandMode *wl_output_get_best_mode (MateWaylandOutput *output);
 static char *wl_output_get_display_name (MateWaylandOutput *output);
 static int round_to_int (double value);
+static MateWaylandOutput *wl_get_primary_output (App *app);
+static gboolean wl_clone_is_active (App *app);
 static void wl_normalize_positions (App *app);
 static void apply_wayland_scale_setting (App *app);
 
@@ -1405,12 +1407,22 @@ apply_wayland_scale_setting (App *app)
 {
     GList *l;
     int scale_setting;
+    gboolean clone_active;
+    double clone_scale = 1.0;
     gboolean changed = FALSE;
 
     if (!app->wl_display)
         return;
 
     scale_setting = CLAMP (g_settings_get_int (app->scale_settings, WINDOW_SCALE_KEY), 0, 2);
+    clone_active = wl_clone_is_active (app);
+
+    if (clone_active) {
+        MateWaylandOutput *primary = wl_get_primary_output (app);
+
+        if (primary)
+            clone_scale = wl_output_get_scale_for_setting (primary, scale_setting);
+    }
 
     for (l = app->wl_display->outputs; l != NULL; l = l->next) {
         MateWaylandOutput *output = l->data;
@@ -1421,7 +1433,7 @@ apply_wayland_scale_setting (App *app)
             continue;
 
         old_scale = output->scale > 0.0 ? output->scale : 1.0;
-        new_scale = wl_output_get_scale_for_setting (output, scale_setting);
+        new_scale = clone_active ? clone_scale : wl_output_get_scale_for_setting (output, scale_setting);
 
         if (ABS (old_scale - new_scale) < 0.001)
             continue;
@@ -1436,6 +1448,192 @@ apply_wayland_scale_setting (App *app)
         wl_normalize_positions (app);
         foo_scroll_area_invalidate (FOO_SCROLL_AREA (app->area));
     }
+}
+
+static gboolean
+wl_output_has_mode_size (MateWaylandOutput *output,
+                         int                width,
+                         int                height)
+{
+    GList *l;
+
+    if (!output)
+        return FALSE;
+
+    for (l = output->modes; l != NULL; l = l->next) {
+        MateWaylandMode *mode = l->data;
+
+        if (mode->width == width && mode->height == height)
+            return TRUE;
+    }
+
+    return FALSE;
+}
+
+static MateWaylandMode *
+wl_output_get_mode_size (MateWaylandOutput *output,
+                         int                width,
+                         int                height)
+{
+    GList *l;
+    MateWaylandMode *best = NULL;
+
+    if (!output)
+        return NULL;
+
+    for (l = output->modes; l != NULL; l = l->next) {
+        MateWaylandMode *mode = l->data;
+
+        if (mode->width != width || mode->height != height)
+            continue;
+
+        if (!best || mode->refresh > best->refresh)
+            best = mode;
+    }
+
+    return best;
+}
+
+static gboolean
+wl_all_enabled_outputs_support_mode (App *app,
+                                     int  width,
+                                     int  height)
+{
+    GList *l;
+
+    for (l = app->wl_display ? app->wl_display->outputs : NULL; l != NULL; l = l->next) {
+        MateWaylandOutput *output = l->data;
+
+        if (!output->enabled)
+            continue;
+
+        if (!wl_output_has_mode_size (output, width, height))
+            return FALSE;
+    }
+
+    return TRUE;
+}
+
+static MateWaylandMode *
+wl_get_common_clone_mode (App *app)
+{
+    MateWaylandOutput *primary;
+    GList *l;
+    MateWaylandMode *best = NULL;
+
+    primary = wl_get_primary_output (app);
+    if (!primary)
+        return NULL;
+
+    for (l = primary->modes; l != NULL; l = l->next) {
+        MateWaylandMode *mode = l->data;
+
+        if (!wl_all_enabled_outputs_support_mode (app, mode->width, mode->height))
+            continue;
+
+        if (!best || (mode->width * mode->height) > (best->width * best->height))
+            best = mode;
+    }
+
+    return best;
+}
+
+static gboolean
+wl_clone_is_active (App *app)
+{
+    GList *l;
+    gboolean found = FALSE;
+    int clone_x = 0;
+    int clone_y = 0;
+
+    if (wl_count_enabled_outputs (app) < 2)
+        return FALSE;
+
+    for (l = app->wl_display ? app->wl_display->outputs : NULL; l != NULL; l = l->next) {
+        MateWaylandOutput *output = l->data;
+
+        if (!output->enabled)
+            continue;
+
+        if (!found) {
+            clone_x = output->x;
+            clone_y = output->y;
+            found = TRUE;
+            continue;
+        }
+
+        if (output->x != clone_x || output->y != clone_y)
+            return FALSE;
+    }
+
+    return found;
+}
+
+static void
+wl_layout_outputs_horizontally (App *app)
+{
+    GList *l;
+    int x = 0;
+
+    for (l = app->wl_display ? app->wl_display->outputs : NULL; l != NULL; l = l->next) {
+        MateWaylandOutput *output = l->data;
+        int w;
+
+        if (!output->enabled)
+            continue;
+
+        output->x = x;
+        output->y = 0;
+        wl_output_get_geometry (output, NULL, NULL, &w, NULL);
+        x += w;
+    }
+}
+
+static void
+wl_set_clone (App     *app,
+              gboolean clone)
+{
+    GList *l;
+
+    if (!app->wl_display || wl_count_enabled_outputs (app) < 2)
+        return;
+
+    if (clone) {
+        MateWaylandMode *clone_mode = wl_get_common_clone_mode (app);
+        int width = 0;
+        int height = 0;
+
+        if (clone_mode) {
+            width = clone_mode->width;
+            height = clone_mode->height;
+        }
+
+        for (l = app->wl_display->outputs; l != NULL; l = l->next) {
+            MateWaylandOutput *output = l->data;
+
+            if (!output->enabled)
+                continue;
+
+            if (clone_mode) {
+                MateWaylandMode *mode = wl_output_get_mode_size (output, width, height);
+
+                if (mode) {
+                    output->current_mode = mode;
+                    output->width = mode->width;
+                    output->height = mode->height;
+                }
+            }
+
+            output->x = 0;
+            output->y = 0;
+        }
+    } else {
+        wl_layout_outputs_horizontally (app);
+    }
+
+    apply_wayland_scale_setting (app);
+    rebuild_gui (app);
+    foo_scroll_area_invalidate (FOO_SCROLL_AREA (app->area));
 }
 
 static void
@@ -1781,6 +1979,23 @@ rebuild_wayland_on_off_radios (App *app)
 }
 
 static void
+rebuild_wayland_mirror_screens (App *app)
+{
+    gboolean mirror_is_supported;
+    gboolean mirror_is_active;
+
+    g_signal_handlers_block_by_func (app->clone_checkbox, G_CALLBACK (on_clone_changed), app);
+
+    mirror_is_supported = wl_count_enabled_outputs (app) > 1;
+    mirror_is_active = mirror_is_supported && wl_clone_is_active (app);
+
+    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (app->clone_checkbox), mirror_is_active);
+    gtk_widget_set_sensitive (app->clone_checkbox, mirror_is_supported);
+
+    g_signal_handlers_unblock_by_func (app->clone_checkbox, G_CALLBACK (on_clone_changed), app);
+}
+
+static void
 rebuild_wayland_gui (App *app)
 {
     gboolean sensitive;
@@ -1792,19 +2007,19 @@ rebuild_wayland_gui (App *app)
 
     rebuild_scale_window (app);
     apply_wayland_scale_setting (app);
+    rebuild_wayland_mirror_screens (app);
     rebuild_wayland_current_monitor_label (app);
     rebuild_wayland_on_off_radios (app);
     rebuild_wayland_resolution_combo (app);
     rebuild_wayland_rate_combo (app);
     rebuild_wayland_rotation_combo (app);
 
-    gtk_widget_set_sensitive (app->clone_checkbox, FALSE);
     gtk_widget_set_sensitive (app->panel_checkbox, sensitive);
     gtk_widget_set_sensitive (app->primary_button,
                               app->current_wl_output && !app->current_wl_output->primary);
     gtk_widget_set_sensitive (app->apply_button,
                               app->wl_display && app->wl_display->output_manager);
-    gtk_widget_set_sensitive (app->detect_controls_hbox, FALSE);
+    gtk_widget_set_sensitive (app->detect_controls_hbox, TRUE);
     gtk_widget_set_sensitive (app->panel_icon_vbox, TRUE);
     gtk_widget_set_sensitive (app->show_icon_checkbox, TRUE);
     gtk_widget_set_sensitive (app->area, app->wl_display && app->wl_display->outputs);
@@ -2212,8 +2427,13 @@ on_clone_changed (GtkWidget *box, gpointer data)
 {
     App *app = data;
 
-    if (app->wl_display)
+    if (app->wl_display) {
+        if (app->ignore_gui_changes)
+            return;
+
+        wl_set_clone (app, gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (app->clone_checkbox)));
         return;
+    }
 
     mate_rr_config_set_clone (app->current_configuration, gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (app->clone_checkbox)));
 
@@ -3641,6 +3861,31 @@ on_detect_displays (GtkWidget *widget, gpointer data)
 {
     App *app = data;
     GError *error;
+
+    if (app->wl_display) {
+        MateWaylandDisplay *display;
+
+        display = mate_wayland_display_new ();
+        if (!display || !display->output_manager) {
+            if (display)
+                mate_wayland_display_free (display);
+
+            error_message (app,
+                           _("Could not detect displays"),
+                           _("The Wayland compositor does not support wlr-output-management-unstable-v1."));
+            return;
+        }
+
+        hide_wayland_monitor_labels (app);
+        mate_wayland_display_free (app->wl_display);
+        app->wl_display = display;
+        app->current_wl_output = wl_get_primary_output (app);
+        app->current_output = NULL;
+
+        rebuild_gui (app);
+        foo_scroll_area_invalidate (FOO_SCROLL_AREA (app->area));
+        return;
+    }
 
     if (!app->screen)
         return;
