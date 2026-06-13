@@ -35,6 +35,7 @@
 #include <X11/Xlib.h>
 #include <glib/gi18n.h>
 #include <gio/gio.h>
+#include <gmodule.h>
 
 #include "capplet-util.h"
 
@@ -66,6 +67,7 @@ struct App
     MateWaylandDisplay *wl_display;
     MateRRConfig  *current_configuration;
     MateRRLabeler *labeler;
+    GList *wl_label_windows;
     MateRROutputInfo         *current_output;
     MateWaylandOutput *current_wl_output;
 
@@ -126,6 +128,7 @@ static void wl_output_get_geometry (MateWaylandOutput *output,
                                     int               *y,
                                     int               *w,
                                     int               *h);
+static char *wl_output_get_display_name (MateWaylandOutput *output);
 
 static void
 error_message (App *app, const char *primary_text, const char *secondary_text)
@@ -936,6 +939,227 @@ set_override_color (GtkWidget  *widget,
   g_object_unref (provider);
 }
 
+typedef struct {
+    gboolean attempted;
+    gboolean available;
+    GModule *module;
+    gboolean (*is_supported) (void);
+    void (*init_for_window) (GtkWindow *window);
+    void (*set_namespace) (GtkWindow *window, const char *name_space);
+    void (*set_layer) (GtkWindow *window, int layer);
+    void (*set_monitor) (GtkWindow *window, GdkMonitor *monitor);
+    void (*set_anchor) (GtkWindow *window, int edge, gboolean anchor_to_edge);
+    void (*set_margin) (GtkWindow *window, int edge, int margin_size);
+    void (*set_keyboard_mode) (GtkWindow *window, int mode);
+} GtkLayerShellApi;
+
+static GtkLayerShellApi gtk_layer_shell_api;
+
+enum {
+    GTK_LAYER_SHELL_LAYER_OVERLAY = 3,
+    GTK_LAYER_SHELL_EDGE_RIGHT = 1,
+    GTK_LAYER_SHELL_EDGE_TOP = 2,
+    GTK_LAYER_SHELL_KEYBOARD_MODE_NONE = 0
+};
+
+static gboolean
+load_gtk_layer_shell (void)
+{
+    GtkLayerShellApi *api = &gtk_layer_shell_api;
+
+    if (api->attempted)
+        return api->available;
+
+    api->attempted = TRUE;
+
+    if (!g_module_supported ())
+        return FALSE;
+
+    api->module = g_module_open ("libgtk-layer-shell.so.0", G_MODULE_BIND_LAZY);
+    if (!api->module)
+        api->module = g_module_open ("libgtk-layer-shell.so", G_MODULE_BIND_LAZY);
+
+    if (!api->module)
+        return FALSE;
+
+    api->available =
+        g_module_symbol (api->module, "gtk_layer_is_supported", (gpointer *) &api->is_supported) &&
+        g_module_symbol (api->module, "gtk_layer_init_for_window", (gpointer *) &api->init_for_window) &&
+        g_module_symbol (api->module, "gtk_layer_set_namespace", (gpointer *) &api->set_namespace) &&
+        g_module_symbol (api->module, "gtk_layer_set_layer", (gpointer *) &api->set_layer) &&
+        g_module_symbol (api->module, "gtk_layer_set_monitor", (gpointer *) &api->set_monitor) &&
+        g_module_symbol (api->module, "gtk_layer_set_anchor", (gpointer *) &api->set_anchor) &&
+        g_module_symbol (api->module, "gtk_layer_set_margin", (gpointer *) &api->set_margin) &&
+        g_module_symbol (api->module, "gtk_layer_set_keyboard_mode", (gpointer *) &api->set_keyboard_mode);
+
+    if (!api->available) {
+        g_module_close (api->module);
+        api->module = NULL;
+    }
+
+    return api->available;
+}
+
+static void
+hide_wayland_monitor_labels (App *app)
+{
+    if (!app->wl_label_windows)
+        return;
+
+    g_list_free_full (app->wl_label_windows, (GDestroyNotify) gtk_widget_destroy);
+    app->wl_label_windows = NULL;
+}
+
+static GdkMonitor *
+get_gdk_monitor_for_wayland_output (MateWaylandOutput *output,
+                                    int                fallback_index)
+{
+    GdkDisplay *display;
+    GdkMonitor *monitor;
+    int monitor_index;
+    int n_monitors;
+
+    display = gdk_display_get_default ();
+    if (!display)
+        return NULL;
+
+    monitor_index = get_wayland_gdk_monitor_index_for_output (output);
+    n_monitors = gdk_display_get_n_monitors (display);
+
+    if (monitor_index < 0 || monitor_index >= n_monitors)
+        monitor_index = fallback_index;
+
+    if (monitor_index < 0 || monitor_index >= n_monitors)
+        return NULL;
+
+    monitor = gdk_display_get_monitor (display, monitor_index);
+    return monitor;
+}
+
+static GtkWidget *
+create_wayland_monitor_label (App               *app,
+                              MateWaylandOutput *output,
+                              int                number,
+                              int                fallback_monitor)
+{
+    GtkLayerShellApi *api = &gtk_layer_shell_api;
+    GtkWidget *window;
+    GtkWidget *event_box;
+    GtkWidget *label;
+    GtkCssProvider *provider;
+    GtkStyleContext *context;
+    GdkMonitor *monitor;
+    char *display_name;
+    char *markup;
+    const char *css =
+        "#mate-display-monitor-label {"
+        "  background-color: rgba(140, 174, 219, 0.92);"
+        "  border: 2px solid rgba(0, 0, 0, 0.75);"
+        "  border-radius: 6px;"
+        "}"
+        "#mate-display-monitor-label label {"
+        "  color: #000000;"
+        "}";
+
+    window = gtk_window_new (GTK_WINDOW_POPUP);
+    gtk_window_set_decorated (GTK_WINDOW (window), FALSE);
+    gtk_window_set_resizable (GTK_WINDOW (window), FALSE);
+    gtk_window_set_accept_focus (GTK_WINDOW (window), FALSE);
+    gtk_window_set_skip_taskbar_hint (GTK_WINDOW (window), TRUE);
+    gtk_window_set_skip_pager_hint (GTK_WINDOW (window), TRUE);
+
+    api->init_for_window (GTK_WINDOW (window));
+    api->set_namespace (GTK_WINDOW (window), "mate-display-properties-label");
+    api->set_layer (GTK_WINDOW (window), GTK_LAYER_SHELL_LAYER_OVERLAY);
+    api->set_keyboard_mode (GTK_WINDOW (window), GTK_LAYER_SHELL_KEYBOARD_MODE_NONE);
+    api->set_anchor (GTK_WINDOW (window), GTK_LAYER_SHELL_EDGE_RIGHT, TRUE);
+    api->set_anchor (GTK_WINDOW (window), GTK_LAYER_SHELL_EDGE_TOP, TRUE);
+    api->set_margin (GTK_WINDOW (window), GTK_LAYER_SHELL_EDGE_RIGHT, 24);
+    api->set_margin (GTK_WINDOW (window), GTK_LAYER_SHELL_EDGE_TOP, 48);
+
+    monitor = get_gdk_monitor_for_wayland_output (output, fallback_monitor);
+    if (monitor)
+        api->set_monitor (GTK_WINDOW (window), monitor);
+
+    event_box = gtk_event_box_new ();
+    gtk_widget_set_name (event_box, "mate-display-monitor-label");
+    gtk_widget_set_size_request (event_box, 160, 92);
+    gtk_container_add (GTK_CONTAINER (window), event_box);
+
+    display_name = wl_output_get_display_name (output);
+    markup = g_strdup_printf ("<span font_desc=\"Sans Bold 32\">%d</span>\n"
+                              "<span font_desc=\"Sans Bold 11\">%s</span>\n"
+                              "<span font_desc=\"Sans 8\">%s</span>",
+                              number,
+                              display_name,
+                              output->name ? output->name : "");
+
+    label = gtk_label_new (NULL);
+    gtk_label_set_markup (GTK_LABEL (label), markup);
+    gtk_label_set_justify (GTK_LABEL (label), GTK_JUSTIFY_CENTER);
+    gtk_label_set_ellipsize (GTK_LABEL (label), PANGO_ELLIPSIZE_END);
+    gtk_label_set_max_width_chars (GTK_LABEL (label), 18);
+    gtk_widget_set_margin_top (label, 8);
+    gtk_widget_set_margin_bottom (label, 8);
+    gtk_widget_set_margin_start (label, 12);
+    gtk_widget_set_margin_end (label, 12);
+    gtk_container_add (GTK_CONTAINER (event_box), label);
+
+    provider = gtk_css_provider_new ();
+    gtk_css_provider_load_from_data (provider, css, -1, NULL);
+    context = gtk_widget_get_style_context (event_box);
+    gtk_style_context_add_provider (context,
+                                    GTK_STYLE_PROVIDER (provider),
+                                    GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    context = gtk_widget_get_style_context (label);
+    gtk_style_context_add_provider (context,
+                                    GTK_STYLE_PROVIDER (provider),
+                                    GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref (provider);
+
+    gtk_widget_show_all (window);
+
+    g_free (display_name);
+    g_free (markup);
+
+    return window;
+}
+
+static void
+show_wayland_monitor_labels (App *app)
+{
+    GList *l;
+    int number = 1;
+    int monitor_index = 0;
+
+    hide_wayland_monitor_labels (app);
+
+    if (!gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (app->show_icon_checkbox)))
+        return;
+
+    if (!app->wl_display || !load_gtk_layer_shell ())
+        return;
+
+    if (!gtk_layer_shell_api.is_supported ())
+        return;
+
+    for (l = app->wl_display->outputs; l != NULL; l = l->next) {
+        MateWaylandOutput *output = l->data;
+        GtkWidget *label_window;
+
+        if (!output->enabled)
+            continue;
+
+        label_window = create_wayland_monitor_label (app,
+                                                     output,
+                                                     number,
+                                                     monitor_index);
+        app->wl_label_windows = g_list_prepend (app->wl_label_windows, label_window);
+        number++;
+        monitor_index++;
+    }
+}
+
 static void
 rebuild_current_monitor_label (App *app)
 {
@@ -1473,8 +1697,11 @@ rebuild_wayland_gui (App *app)
     gtk_widget_set_sensitive (app->apply_button,
                               app->wl_display && app->wl_display->output_manager);
     gtk_widget_set_sensitive (app->detect_controls_hbox, FALSE);
-    gtk_widget_set_sensitive (app->panel_icon_vbox, FALSE);
+    gtk_widget_set_sensitive (app->panel_icon_vbox, TRUE);
+    gtk_widget_set_sensitive (app->show_icon_checkbox, TRUE);
     gtk_widget_set_sensitive (app->area, app->wl_display && app->wl_display->outputs);
+
+    show_wayland_monitor_labels (app);
 }
 
 static void
@@ -3361,6 +3588,13 @@ on_show_icon_toggled (GtkWidget *widget, gpointer data)
 
     g_settings_set_boolean (app->settings, SHOW_ICON_KEY,
 			   gtk_toggle_button_get_active (tb));
+
+    if (app->wl_display) {
+        if (gtk_toggle_button_get_active (tb))
+            show_wayland_monitor_labels (app);
+        else
+            hide_wayland_monitor_labels (app);
+    }
 }
 
 static MateRROutputInfo *
@@ -3744,6 +3978,7 @@ restart:
 	break;
     }
 
+    hide_wayland_monitor_labels (app);
     gtk_widget_destroy (app->dialog);
     if (app->screen) g_object_unref (app->screen);
     if (app->wl_display) mate_wayland_display_free (app->wl_display);
