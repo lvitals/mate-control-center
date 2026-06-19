@@ -365,7 +365,7 @@ msgid ""
 msgstr ""
 "I den övre delen av fönstret visas en liten version av den valda bakgrunden."
 " Nedan finns rutor där du kan välja vilket läge din bakgrund använder: "
-"<_:variabellista-1/>"
+"<_:variablelist-1/>"
 
 #. (itstool) path: sect2/para
 #: C/config-background.xml:82
@@ -460,7 +460,7 @@ msgid ""
 "<_:orderedlist-1/>"
 msgstr ""
 "För att konfigurera en backgrond, välj ett av följande steg: "
-"<_:beställningslista-1/>"
+"<_:orderedlist-1/>"
 
 #. (itstool) path: sect1/title
 #: C/config-behavior.xml:2
@@ -974,8 +974,8 @@ msgid ""
 "Most of the time, <_:filename-1/> holds the motd. If the file is different "
 "from <_:filename-2/>, you can edit that in the <_:guilabel-3/> field."
 msgstr ""
-"För det mesta innehåller <_:filnamn-1/> motd. Om filen är annorlunda än "
-"<_:filnamn-2/> kan du redigera det i fältet <_:guilabel-3/>."
+"För det mesta innehåller <_:filename-1/> motd. Om filen är annorlunda än "
+"<_:filename-2/> kan du redigera det i fältet <_:guilabel-3/>."
 
 #. (itstool) path: sect2/para
 #: C/config-hints.xml:18
@@ -984,7 +984,7 @@ msgid ""
 "disable, click the <_:guibutton-1/> button. <_:variablelist-2/>"
 msgstr ""
 "Ibland vill användaren att tipsfönstret inte ska visas. För att aktivera "
-"eller inaktivera, klicka på <_:guibutton-1/>-knappen. <_:variabellista-2/>"
+"eller inaktivera, klicka på <_:guibutton-1/>-knappen. <_:variablelist-2/>"
 
 #. (itstool) path: sect1/title
 #: C/config-html.xml:2
@@ -1076,7 +1076,7 @@ msgid ""
 "<_:application-1/>. <_:variablelist-2/>"
 msgstr ""
 "Konfigurerar de teckensnitt som ska användas när du skriver ut något på din "
-"skrivare från <_:application-1/>. <_:variabellista-2/>"
+"skrivare från <_:application-1/>. <_:variablelist-2/>"
 
 #. (itstool) path: para/application
 #: C/config-html.xml:88
@@ -1253,7 +1253,7 @@ msgid ""
 "<_:variablelist-2/>"
 msgstr ""
 "I avsnittet <_:guilabel-1/> har du följande inställningar: "
-"<_:variabellista-2/>"
+"<_:variablelist-2/>"
 
 #. (itstool) path: sect1/title
 #. (itstool) path: para/guilabel
@@ -1326,7 +1326,7 @@ msgid ""
 msgstr ""
 "Det uppstår normalt en fördröjning mellan det att tangenten trycks ned och "
 "det att upprepningen visas på skärmen. Detta kan du välja: "
-"<_:objektlista-1/>"
+"<_:itemizedlist-1/>"
 
 #. (itstool) path: varlistentry/term
 #: C/config-kbd.xml:58
@@ -1355,7 +1355,7 @@ msgid ""
 " The available speeds are: <_:itemizedlist-1/>"
 msgstr ""
 "När en tangenttryckning upprepas kan du styra hur snabbt den ska upprepas. "
-"De tillgängliga hastigheterna är: <_:objektlista-1/>"
+"De tillgängliga hastigheterna är: <_:itemizedlist-1/>"
 
 #. (itstool) path: varlistentry/term
 #: C/config-kbd.xml:89
@@ -1394,7 +1394,7 @@ msgid ""
 "following options are available: <_:variablelist-2/>"
 msgstr ""
 "Tangentbordets beteende styrs via fliken <_:guilabel-1/>. Följande "
-"alternativ finns tillgängliga: <_:variabellista-2/>"
+"alternativ finns tillgängliga: <_:variablelist-2/>"
 
 #. (itstool) path: sect2/title
 #: C/config-kbd.xml:113
@@ -1498,7 +1498,7 @@ msgid ""
 "can be configured in the <_:guilabel-1/> tab. <_:variablelist-2/>"
 msgstr ""
 "Tangentbordet avger ibland ljud för att fånga användarens uppmärksamhet. "
-"Ljuden kan konfigureras på fliken <_:guilabel-1/>. <_:variabellista-2/>"
+"Ljuden kan konfigureras på fliken <_:guilabel-1/>. <_:variablelist-2/>"
 
 #. (itstool) path: sect1/title
 #: C/config-keybindings.xml:2
@@ -2218,7 +2218,7 @@ msgid ""
 "<_:variablelist-2/>"
 msgstr ""
 "Gränssnittet <_:application-1/> är uppdelat i två huvudavsnitt: "
-"<_:variabellista-2/>"
+"<_:variablelist-2/>"
 
 #. (itstool) path: sect3/title
 #: C/config-screensaver.xml:48
@@ -2282,7 +2282,7 @@ msgid ""
 "<_:variablelist-1/>"
 msgstr ""
 "Du kan välja olika lägen för att visa din skärmsläckare: "
-"<_:variabellista-1/>"
+"<_:variablelist-1/>"
 
 #. (itstool) path: listitem/para
 #: C/config-screensaver.xml:102
@@ -2335,7 +2335,7 @@ msgid ""
 "Set the time preferences. The available options are: <_:variablelist-1/>"
 msgstr ""
 "Ställ in tidspreferenser. De tillgängliga alternativen är: "
-"<_:variabellista-1/>"
+"<_:variablelist-1/>"
 
 #. (itstool) path: sect3/para
 #: C/config-screensaver.xml:49
@@ -2344,7 +2344,7 @@ msgid ""
 "setup your screensaver: <_:orderedlist-1/>"
 msgstr ""
 "Det är troligt att du vill ställa in din skärmsläckare. Nedan följer stegen "
-"för att ställa in din skärmsläckare: <_:beställningslista-1/>"
+"för att ställa in din skärmsläckare: <_:orderedlist-1/>"
 
 #. (itstool) path: para/guibutton
 #: C/config-screensaver.xml:145 C/config-screensaver.xml:148
@@ -2453,7 +2453,7 @@ msgstr "Färgkartor"
 msgid ""
 "The <_:guilabel-1/> tab is broken into four sections: <_:variablelist-2/>"
 msgstr ""
-"Fliken <_:guilabel-1/> är uppdelad i fyra avsnitt: <_:variabellista-2/>"
+"Fliken <_:guilabel-1/> är uppdelad i fyra avsnitt: <_:variablelist-2/>"
 
 #. (itstool) path: sect3/title
 #: C/config-screensaver.xml:207
@@ -2480,7 +2480,7 @@ msgstr ""
 "Din skärmsläckare har möjlighet att ta ditt skrivbord och tillfälligt köra "
 "bildmanipulationer på ditt skrivbord som din skärmsläckare. Det finns flera "
 "alternativ för att ställa in din bildmanipulation. Välj den metod för "
-"bildmanipulation som du vill använda. <_:not-1/>"
+"bildmanipulation som du vill använda. <_:note-1/>"
 
 #. (itstool) path: sect3/title
 #: C/config-screensaver.xml:223
@@ -2521,7 +2521,7 @@ msgid ""
 msgstr ""
 "Ibland kan det uppstå problem i systemet på grund av skärmsläckaren. Använd "
 "det här avsnittet för att visa information som kan hjälpa dig att åtgärda "
-"problemet. <_:not-1/>"
+"problemet. <_:note-1/>"
 
 #. (itstool) path: sect3/title
 #: C/config-screensaver.xml:246
@@ -2610,7 +2610,7 @@ msgstr "Öppna filen gtkrc som innehåller specifikationerna för ditt tema."
 #. (itstool) path: sect2/para
 #: C/config-themes.xml:24
 msgid "To add a theme to use: <_:orderedlist-1/>"
-msgstr "För att lägga till ett tema att använda: <_:beställningslista-1/>"
+msgstr "För att lägga till ett tema att använda: <_:orderedlist-1/>"
 
 #. (itstool) path: para/ulink
 #: C/legal.xml:9
@@ -2727,4 +2727,4 @@ msgid ""
 msgstr ""
 "DOKUMENTET OCH MODIFIERADE VERSIONER AV DOKUMENTET TILLHANDAHÅLLS ENLIGT "
 "VILLKOREN I GNU:S LICENS FÖR FRI DOKUMENTATION MED DEN YTTERLIGARE "
-"ÖVERENSKOMMELSEN ATT: <_:beställningslista-1/>"
+"ÖVERENSKOMMELSEN ATT: <_:orderedlist-1/>"

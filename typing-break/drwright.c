@@ -505,10 +505,12 @@ static void
 init_app_indicator (DrWright *dr)
 {
 	dr->indicator =
-		app_indicator_new_with_path ("typing-break-indicator",
-					     TYPING_MONITOR_ACTIVE_ICON,
-					     APP_INDICATOR_CATEGORY_APPLICATION_STATUS,
-					     IMAGEDIR);
+		g_object_new (app_indicator_get_type (),
+			      "id", "typing-break-indicator",
+			      "icon-name", TYPING_MONITOR_ACTIVE_ICON,
+			      "category", APP_INDICATOR_CATEGORY_APPLICATION_STATUS,
+			      "icon-theme-path", IMAGEDIR,
+			      NULL);
 	if (dr->enabled) {
 		app_indicator_set_status (dr->indicator,
 					  APP_INDICATOR_STATUS_ACTIVE);
@@ -518,7 +520,7 @@ init_app_indicator (DrWright *dr)
 	}
 
 	app_indicator_set_menu (dr->indicator, GTK_MENU (dr->menu));
-	app_indicator_set_attention_icon (dr->indicator, TYPING_MONITOR_ATTENTION_ICON);
+	app_indicator_set_attention_icon_full (dr->indicator, TYPING_MONITOR_ATTENTION_ICON, "typing-break-attention");
 
 	update_status (dr);
 	update_app_indicator (dr);
