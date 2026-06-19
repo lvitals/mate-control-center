@@ -438,7 +438,9 @@ xkb_layout_choose (GtkBuilder * dialog)
 	GtkWidget *chooser = CWID ("xkb_layout_chooser");
 	GtkWidget *lang_chooser = CWID ("xkb_languages_available");
 	GtkWidget *notebook = CWID ("choosers_nb");
+#ifdef HAVE_X11_EXTENSIONS_XKB_H
 	GtkWidget *kbdraw = NULL;
+#endif
 	GtkWidget *toplevel = NULL;
 
 	gtk_window_set_transient_for (GTK_WINDOW (chooser),

@@ -351,10 +351,10 @@ image_drag_data_received_cb (GtkWidget *widget,
 		char *uri;
 		GFile *file;
 		GInputStream *istream;
-		char *nl = strstr (data, "\r\n");
+		const char *nl = strstr (data, "\r\n");
 
 		if (nl)
-			uri = g_strndup (data, nl - (char *) data);
+			uri = g_strndup (data, nl - data);
 		else
 			uri = g_strdup (data);
 

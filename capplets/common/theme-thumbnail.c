@@ -432,7 +432,7 @@ handle_bytes (const guint8       *buffer,
 
   while (bytes_read > 0)
   {
-    guint8 *nil;
+    const guint8 *nil;
 
     switch (theme_thumbnail_data->status)
     {
