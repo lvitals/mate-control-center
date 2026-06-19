@@ -450,109 +450,106 @@ file_transfer_dialog_overwrite (gpointer user_data)
 }
 
 /* TODO: support transferring directories recursively? */
-static gboolean
-file_transfer_job_schedule (GIOSchedulerJob *io_job,
-			    GCancellable *cancellable,
-			    FileTransferJob *job)
+static void
+file_transfer_task_thread (GTask *task,
+                           gpointer source_object,
+                           gpointer task_data,
+                           GCancellable *cancellable)
 {
-	GFile *source, *target;
-	gboolean success;
-	GFileCopyFlags copy_flags = G_FILE_COPY_NONE;
-	FileTransferData data;
-	GError *error;
-	gboolean retry;
+	FileTransferJob *job = task_data;
+	gboolean success = TRUE;
 
-	/* take the first file from the list and copy it */
-	source = job->source_files->data;
-	job->source_files = g_slist_delete_link (job->source_files, job->source_files);
+	while (job->source_files != NULL) {
+		GFile *source;
+		GFile *target;
+		GFileCopyFlags copy_flags = G_FILE_COPY_NONE;
+		FileTransferData data;
+		gboolean retry;
 
-	target = job->target_files->data;
-	job->target_files = g_slist_delete_link (job->target_files, job->target_files);
+		if (g_cancellable_is_cancelled (cancellable)) {
+			success = FALSE;
+			break;
+		}
 
-	data.dialog = job->dialog;
-	data.overwrite_dialog = job->overwrite_dialog;
-	data.current_file = job->dialog->priv->nth + 1;
-	data.total_files = job->dialog->priv->total;
-	data.current_bytes = data.total_bytes = 0;
-	data.source = g_file_get_basename (source);
-	data.target = g_file_get_basename (target);
+		/* take the first file from the list and copy it */
+		source = job->source_files->data;
+		job->source_files = g_slist_delete_link (job->source_files, job->source_files);
 
-	g_io_scheduler_job_send_to_mainloop (io_job,
-					     file_transfer_job_update,
-					     &data,
-					     NULL);
+		target = job->target_files->data;
+		job->target_files = g_slist_delete_link (job->target_files, job->target_files);
 
-	if (job->options & FILE_TRANSFER_DIALOG_OVERWRITE)
-		copy_flags |= G_FILE_COPY_OVERWRITE;
+		data.dialog = job->dialog;
+		data.overwrite_dialog = job->overwrite_dialog;
+		data.current_file = job->dialog->priv->nth + 1;
+		data.total_files = job->dialog->priv->total;
+		data.current_bytes = data.total_bytes = 0;
+		data.source = g_file_get_basename (source);
+		data.target = g_file_get_basename (target);
 
-	do {
-		retry = FALSE;
-		error = NULL;
-		success = g_file_copy (source, target,
-				       copy_flags,
-				       job->dialog->priv->cancellable,
-				       file_transfer_job_progress,
-				       &data,
-				       &error);
+		g_main_context_invoke (NULL, file_transfer_job_update, &data);
 
-		if (error != NULL)
-		{
-			if (error->domain == G_IO_ERROR &&
-			    error->code == G_IO_ERROR_EXISTS)
+		if (job->options & FILE_TRANSFER_DIALOG_OVERWRITE)
+			copy_flags |= G_FILE_COPY_OVERWRITE;
+
+		do {
+			retry = FALSE;
+			GError *error = NULL;
+			success = g_file_copy (source, target,
+					       copy_flags,
+					       cancellable,
+					       file_transfer_job_progress,
+					       &data,
+					       &error);
+
+			if (error != NULL)
 			{
-				/* since the job is run in a thread, we cannot simply run
-				 * a dialog here and need to defer it to the mainloop */
-				data.response = GTK_RESPONSE_NONE;
-				g_io_scheduler_job_send_to_mainloop (io_job,
-								     file_transfer_dialog_overwrite,
-								     &data,
-								     NULL);
+				if (error->domain == G_IO_ERROR &&
+				    error->code == G_IO_ERROR_EXISTS)
+				{
+					/* since the job is run in a thread, we cannot simply run
+					 * a dialog here and need to defer it to the mainloop */
+					data.response = GTK_RESPONSE_NONE;
+					g_main_context_invoke (NULL, file_transfer_dialog_overwrite, &data);
 
-				if (data.response == GTK_RESPONSE_YES) {
-					retry = TRUE;
-					copy_flags |= G_FILE_COPY_OVERWRITE;
-				} else if (data.response == GTK_RESPONSE_APPLY) {
-					retry = TRUE;
-					job->options |= FILE_TRANSFER_DIALOG_OVERWRITE;
-					copy_flags |= G_FILE_COPY_OVERWRITE;
-				} else {
-					success = TRUE;
+					if (data.response == GTK_RESPONSE_YES) {
+						retry = TRUE;
+						copy_flags |= G_FILE_COPY_OVERWRITE;
+					} else if (data.response == GTK_RESPONSE_APPLY) {
+						retry = TRUE;
+						job->options |= FILE_TRANSFER_DIALOG_OVERWRITE;
+						copy_flags |= G_FILE_COPY_OVERWRITE;
+					} else {
+						success = TRUE;
+					}
+
+					job->overwrite_dialog = data.overwrite_dialog;
 				}
-
-				job->overwrite_dialog = data.overwrite_dialog;
+				g_error_free (error);
 			}
-			g_error_free (error);
-		}
-	} while (retry);
+		} while (retry);
 
-	g_object_unref (source);
-	g_object_unref (target);
+		g_object_unref (source);
+		g_object_unref (target);
 
-	g_free (data.source);
-	g_free (data.target);
+		g_free (data.source);
+		g_free (data.target);
 
-	if (success)
-	{
-		if (job->source_files == NULL)
-		{
-			g_io_scheduler_job_send_to_mainloop_async (io_job,
-								   (GSourceFunc) file_transfer_dialog_done,
-								   g_object_ref (job->dialog),
-								   g_object_unref);
-			return FALSE;
+		if (!success) {
+			break;
 		}
 	}
-	else /* error on copy or cancelled */
-	{
-		g_io_scheduler_job_send_to_mainloop_async (io_job,
-							   (GSourceFunc) file_transfer_dialog_cancel,
-							   g_object_ref (job->dialog),
-							   g_object_unref);
-		return FALSE;
-	}
 
-	/* more work to do... */
-	return TRUE;
+	if (success) {
+		g_idle_add_full (G_PRIORITY_DEFAULT_IDLE,
+				 (GSourceFunc) file_transfer_dialog_done,
+				 g_object_ref (job->dialog),
+				 g_object_unref);
+	} else {
+		g_idle_add_full (G_PRIORITY_DEFAULT_IDLE,
+				 (GSourceFunc) file_transfer_dialog_cancel,
+				 g_object_ref (job->dialog),
+				 g_object_unref);
+	}
 }
 
 void
@@ -585,9 +582,9 @@ file_transfer_dialog_copy_async (FileTransferDialog *dlg,
 
 	g_object_set (dlg, "total_uris", n, NULL);
 
-	g_io_scheduler_push_job ((GIOSchedulerJobFunc) file_transfer_job_schedule,
-				 job,
-				 (GDestroyNotify) file_transfer_job_destroy,
-				 priority,
-				 dlg->priv->cancellable);
+	GTask *task = g_task_new (dlg, dlg->priv->cancellable, NULL, NULL);
+	g_task_set_task_data (task, job, (GDestroyNotify) file_transfer_job_destroy);
+	g_task_set_priority (task, priority);
+	g_task_run_in_thread (task, file_transfer_task_thread);
+	g_object_unref (task);
 }
