@@ -214,6 +214,15 @@ theme_load_from_gsettings (AppearanceData *data)
     g_free (scheme);
     scheme = gtkrc_get_color_scheme_for_theme (theme->gtk_theme_name);
   }
+
+  if (scheme != NULL) {
+    gchar *p;
+    for (p = scheme; *p != '\0'; p++) {
+      if (*p == ',') {
+        *p = '\n';
+      }
+    }
+  }
   theme->gtk_color_scheme = scheme;
 
   theme->marco_theme_name = g_settings_get_string (data->marco_settings, MARCO_THEME_KEY);

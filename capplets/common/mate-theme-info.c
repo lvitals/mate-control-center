@@ -1424,7 +1424,14 @@ gtk_theme_info_missing_engine (const gchar *gtk_theme,
        * some links
        * http://forums.linuxmint.com/viewtopic.php?f=190&t=85015
        */
-      gchar *full = g_module_build_path (GTK_ENGINE_DIR, l->data);
+#ifdef G_OS_WIN32
+      gchar *filename = g_strdup_printf ("%s.dll", (const gchar *) l->data);
+#else
+      gchar *filename = g_strdup_printf ("lib%s.%s", (const gchar *) l->data, G_MODULE_SUFFIX);
+#endif
+      gchar *full = g_build_filename (GTK_ENGINE_DIR, filename, NULL);
+      g_free (filename);
+
       gboolean found = g_file_test (full, G_FILE_TEST_EXISTS);
       if (!found) {
          if (name_only) {
