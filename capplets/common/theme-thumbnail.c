@@ -34,6 +34,26 @@ typedef struct {
 
 static ThemeThumbnailAsyncData async_data;
 
+static gboolean
+thumbnail_pipe_write (int         *fd,
+                      const void  *buffer,
+                      size_t       count)
+{
+  if (fd == NULL || *fd <= 0)
+    return FALSE;
+
+  if (write (*fd, buffer, count) == -1)
+  {
+    if (errno != EPIPE)
+      perror ("write error");
+    close (*fd);
+    *fd = 0;
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
 /* Protocol */
 
 /* Our protocol is pretty simple.  The parent process will write several strings
@@ -594,16 +614,16 @@ message_from_capplet (GIOChannel   *source,
 
         /* Write the pixbuf's size */
 
-        if (write (pipe_from_factory_fd[1], &width, sizeof (width)) == -1)
-          perror ("write error");
-
-        if (write (pipe_from_factory_fd[1], &height, sizeof (height)) == -1)
-          perror ("write error");
+        if (!thumbnail_pipe_write (&pipe_from_factory_fd[1], &width, sizeof (width)) ||
+            !thumbnail_pipe_write (&pipe_from_factory_fd[1], &height, sizeof (height)))
+          _exit (0);
 
         for (i = 0; i < height; i++)
         {
-          if (write (pipe_from_factory_fd[1], pixels + rowstride * i, width * gdk_pixbuf_get_n_channels (pixbuf)) == -1)
-            perror ("write error");
+          if (!thumbnail_pipe_write (&pipe_from_factory_fd[1],
+                                     pixels + rowstride * i,
+                                     width * gdk_pixbuf_get_n_channels (pixbuf)))
+            _exit (0);
         }
 
         if (pixbuf)
@@ -766,62 +786,61 @@ send_thumbnail_request (gchar *thumbnail_type,
                         gchar *icon_theme_name,
                         gchar *application_font)
 {
-  if (write (pipe_to_factory_fd[1], thumbnail_type, strlen (thumbnail_type) + 1) == -1)
-    perror ("write error");
+  if (!thumbnail_pipe_write (&pipe_to_factory_fd[1], thumbnail_type, strlen (thumbnail_type) + 1))
+    return;
 
   if (gtk_theme_name)
   {
-    if (write (pipe_to_factory_fd[1], gtk_theme_name, strlen (gtk_theme_name) + 1) == -1)
-      perror ("write error");
+    if (!thumbnail_pipe_write (&pipe_to_factory_fd[1], gtk_theme_name, strlen (gtk_theme_name) + 1))
+      return;
   }
   else
   {
-    if (write (pipe_to_factory_fd[1], "", 1) == -1)
-      perror ("write error");
+    if (!thumbnail_pipe_write (&pipe_to_factory_fd[1], "", 1))
+      return;
   }
 
   if (gtk_color_scheme)
   {
-    if (write (pipe_to_factory_fd[1], gtk_color_scheme, strlen (gtk_color_scheme) + 1) == -1)
-      perror ("write error");
+    if (!thumbnail_pipe_write (&pipe_to_factory_fd[1], gtk_color_scheme, strlen (gtk_color_scheme) + 1))
+      return;
   }
   else
   {
-    if (write (pipe_to_factory_fd[1], "", 1) == -1)
-      perror ("write error");
+    if (!thumbnail_pipe_write (&pipe_to_factory_fd[1], "", 1))
+      return;
   }
 
   if (marco_theme_name)
   {
-    if (write (pipe_to_factory_fd[1], marco_theme_name, strlen (marco_theme_name) + 1) == -1)
-      perror ("write error");
+    if (!thumbnail_pipe_write (&pipe_to_factory_fd[1], marco_theme_name, strlen (marco_theme_name) + 1))
+      return;
   }
   else
   {
-    if (write (pipe_to_factory_fd[1], "", 1) == -1)
-      perror ("write error");
+    if (!thumbnail_pipe_write (&pipe_to_factory_fd[1], "", 1))
+      return;
   }
 
   if (icon_theme_name)
   {
-    if (write (pipe_to_factory_fd[1], icon_theme_name, strlen (icon_theme_name) + 1) == -1)
-      perror ("write error");
+    if (!thumbnail_pipe_write (&pipe_to_factory_fd[1], icon_theme_name, strlen (icon_theme_name) + 1))
+      return;
   }
   else
   {
-    if (write (pipe_to_factory_fd[1], "", 1) == -1)
-      perror ("write error");
+    if (!thumbnail_pipe_write (&pipe_to_factory_fd[1], "", 1))
+      return;
   }
 
   if (application_font)
   {
-    if (write (pipe_to_factory_fd[1], application_font, strlen (application_font) + 1) == -1)
-      perror ("write error");
+    if (!thumbnail_pipe_write (&pipe_to_factory_fd[1], application_font, strlen (application_font) + 1))
+      return;
   }
   else
   {
-    if (write (pipe_to_factory_fd[1], "Sans 10", strlen ("Sans 10") + 1) == -1)
-      perror ("write error");
+    thumbnail_pipe_write (&pipe_to_factory_fd[1], "Sans 10", strlen ("Sans 10") + 1);
   }
 }
 
@@ -1064,6 +1083,8 @@ void
 theme_thumbnail_factory_init (int argc, char *argv[])
 {
   gint child_pid;
+
+  signal (SIGPIPE, SIG_IGN);
 
   if (pipe (pipe_to_factory_fd) == -1)
     perror ("pipe error");

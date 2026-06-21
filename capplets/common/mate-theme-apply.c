@@ -147,9 +147,10 @@ mate_meta_theme_set (MateThemeMetaInfo *meta_theme_info)
       }
     }
 
-  /* Set the cursor theme key */
+  /* Set the cursor theme key if the metatheme defines one. */
   old_key = g_settings_get_string (mouse_settings, CURSOR_THEME_KEY);
-  if (compare (old_key, meta_theme_info->cursor_theme_name))
+  if (meta_theme_info->cursor_theme_name &&
+      (compare (old_key, meta_theme_info->cursor_theme_name)))
     {
       g_settings_set_string (mouse_settings, CURSOR_THEME_KEY, meta_theme_info->cursor_theme_name);
       if (interface_gnome_settings)
@@ -161,7 +162,8 @@ mate_meta_theme_set (MateThemeMetaInfo *meta_theme_info)
     }
 
   old_key_int = g_settings_get_int (mouse_settings, CURSOR_SIZE_KEY);
-  if (old_key_int != meta_theme_info->cursor_size)
+  if (meta_theme_info->cursor_theme_name &&
+      old_key_int != meta_theme_info->cursor_size)
     {
       g_settings_set_int (mouse_settings, CURSOR_SIZE_KEY, meta_theme_info->cursor_size);
     }
@@ -172,4 +174,6 @@ mate_meta_theme_set (MateThemeMetaInfo *meta_theme_info)
   g_object_unref (mouse_settings);
   if (notification_settings != NULL)
     g_object_unref (notification_settings);
+
+  g_settings_sync ();
 }

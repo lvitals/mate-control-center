@@ -391,9 +391,6 @@ mate_theme_read_meta_theme (GFile *meta_theme_uri)
       meta_theme_info->cursor_size = (int) g_ascii_strtoll (str, NULL, 10);
     else
       meta_theme_info->cursor_size = 24;
-  } else {
-    meta_theme_info->cursor_theme_name = g_strdup ("default");
-    meta_theme_info->cursor_size = 24;
   }
 
   /* meta_theme_info->application_font */

@@ -59,6 +59,9 @@ struct _MateWPItem {
   /* Width and Height of the original image */
   gint width;
   gint height;
+
+  gboolean thumbnail_queued;
+  GHashTable *thumbnail_cache;
 };
 
 MateWPItem * mate_wp_item_new (const gchar *filename,
@@ -78,6 +81,10 @@ GdkPixbuf * mate_wp_item_get_frame_thumbnail (MateWPItem *item,
 void mate_wp_item_update (MateWPItem *item);
 void mate_wp_item_update_description (MateWPItem *item);
 void mate_wp_item_ensure_mate_bg (MateWPItem *item);
+void mate_wp_item_invalidate_thumbnail (MateWPItem *item);
+gboolean mate_wp_item_has_cached_thumbnail (MateWPItem *item,
+                                            gint width,
+                                            gint height);
 
 const gchar *wp_item_option_to_string (MateBGPlacement type);
 const gchar *wp_item_shading_to_string (MateBGColorType type);

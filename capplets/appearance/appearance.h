@@ -104,6 +104,8 @@ typedef struct {
 	MateDesktopThumbnailFactory* thumb_factory;
 	gulong screen_size_handler;
 	gulong screen_monitors_handler;
+	gulong wp_view_size_handler;
+	guint wp_resize_timeout_id;
 
 	/* desktop */
 	GHashTable* wp_hash;
@@ -117,6 +119,9 @@ typedef struct {
 	GtkFileChooser* wp_filesel;
 	GtkWidget* wp_image;
 	GSList* wp_uris;
+	GQueue* wp_thumbnail_queue;
+	GdkPixbuf* wp_thumbnail_loading;
+	guint wp_thumbnail_idle_id;
 	gint frame;
 	gint thumb_width;
 	gint thumb_height;
@@ -143,6 +148,7 @@ typedef struct {
 	gchar* revert_desktop_font;
 	gchar* revert_windowtitle_font;
 	gchar* revert_monospace_font;
+	gboolean applying_theme;
 
 	/* style */
 	GdkPixbuf* gtk_theme_icon;
@@ -151,6 +157,13 @@ typedef struct {
 	GtkWidget* style_message_area;
 	GtkWidget* style_message_label;
 	GtkWidget* style_install_button;
+
+	gboolean themes_initialized;
+	gboolean style_initialized;
+	gboolean desktop_initialized;
+	gboolean font_initialized;
+	gboolean ui_initialized;
+	gboolean support_initialized;
 } AppearanceData;
 
 #define appearance_capplet_get_widget(x, y) (GtkWidget*) gtk_builder_get_object(x->ui, y)

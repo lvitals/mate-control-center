@@ -46,7 +46,7 @@ init_appearance_data (int *argc, char ***argv, GOptionContext *context)
   /* set up the data */
   ui = gtk_builder_new_from_resource ("/org/mate/mcc/appearance/data/appearance.ui");
 
-  data = g_new (AppearanceData, 1);
+  data = g_new0 (AppearanceData, 1);
   data->settings = g_settings_new (APPEARANCE_SCHEMA);
   data->wp_settings = g_settings_new (WP_SCHEMA);
 
@@ -91,11 +91,16 @@ main_window_response (GtkWidget *widget,
   {
     gtk_main_quit ();
 
-    themes_shutdown (data);
-    style_shutdown (data);
-    desktop_shutdown (data);
-    font_shutdown (data);
-    support_shutdown (data);
+    if (data->themes_initialized)
+      themes_shutdown (data);
+    if (data->style_initialized)
+      style_shutdown (data);
+    if (data->desktop_initialized)
+      desktop_shutdown (data);
+    if (data->font_initialized)
+      font_shutdown (data);
+    if (data->support_initialized)
+      support_shutdown (data);
 
     g_object_unref (data->thumb_factory);
     g_object_unref (data->settings);
@@ -140,6 +145,82 @@ main_window_response (GtkWidget *widget,
   }
 }
 
+static void
+ensure_theme_page_initialized (AppearanceData *data)
+{
+  if (!data->themes_initialized) {
+    themes_init (data);
+    data->themes_initialized = TRUE;
+  }
+
+  if (!data->style_initialized) {
+    style_init (data);
+    data->style_initialized = TRUE;
+  }
+
+  if (!data->support_initialized) {
+    support_init (data);
+    data->support_initialized = TRUE;
+  }
+}
+
+static void
+ensure_background_page_initialized (AppearanceData *data,
+                                    const gchar   **wallpaper_files)
+{
+  if (!data->desktop_initialized) {
+    desktop_init (data, wallpaper_files);
+    data->desktop_initialized = TRUE;
+  }
+}
+
+static void
+ensure_font_page_initialized (AppearanceData *data)
+{
+  if (!data->font_initialized) {
+    font_init (data);
+    data->font_initialized = TRUE;
+  }
+}
+
+static void
+ensure_interface_page_initialized (AppearanceData *data)
+{
+  if (!data->ui_initialized) {
+    ui_init (data);
+    data->ui_initialized = TRUE;
+  }
+
+  if (!data->support_initialized) {
+    support_init (data);
+    data->support_initialized = TRUE;
+  }
+}
+
+static void
+main_notebook_switch_page_cb (GtkNotebook     *notebook,
+                              GtkWidget       *page,
+                              guint            page_num,
+                              AppearanceData  *data)
+{
+  switch (page_num) {
+    case 0:
+      ensure_theme_page_initialized (data);
+      break;
+    case 1:
+      ensure_background_page_initialized (data, NULL);
+      break;
+    case 2:
+      ensure_font_page_initialized (data);
+      break;
+    case 3:
+      ensure_interface_page_initialized (data);
+      break;
+    default:
+      break;
+  }
+}
+
 int
 main (int argc, char **argv)
 {
@@ -152,6 +233,7 @@ main (int argc, char **argv)
   gchar *install_filename = NULL;
   gchar *start_page = NULL;
   gchar **wallpaper_files = NULL;
+  gboolean background_only_start;
   GOptionContext *option_context;
   GOptionEntry option_entries[] = {
       { "install-theme",
@@ -187,16 +269,23 @@ main (int argc, char **argv)
   if (!data)
     return 1;
 
-  /* init tabs */
-  themes_init (data);
-  style_init (data);
-  desktop_init (data, (const gchar **) wallpaper_files);
-  g_strfreev (wallpaper_files);
-  font_init (data);
-  ui_init (data);
+  /* default to background page if files were given on the command line */
+  if (wallpaper_files && !install_filename && !start_page)
+    start_page = g_strdup ("background");
 
-  /* init support for other window managers */
-  support_init (data);
+  background_only_start = (start_page != NULL &&
+                           strcmp (start_page, "background") == 0 &&
+                           install_filename == NULL);
+
+  if (background_only_start) {
+    ensure_background_page_initialized (data, (const gchar **) wallpaper_files);
+  } else {
+    ensure_theme_page_initialized (data);
+    ensure_background_page_initialized (data, (const gchar **) wallpaper_files);
+    ensure_font_page_initialized (data);
+    ensure_interface_page_initialized (data);
+  }
+  g_strfreev (wallpaper_files);
 
   /* prepare the main window */
   w = appearance_capplet_get_widget (data, "appearance_window");
@@ -213,16 +302,16 @@ main (int argc, char **argv)
   g_signal_connect_after (w, "response",
                           (GCallback) main_window_response, data);
 
-  /* default to background page if files were given on the command line */
-  if (wallpaper_files && !install_filename && !start_page)
-    start_page = g_strdup ("background");
-
   nb = appearance_capplet_get_widget (data, "main_notebook");
   gtk_widget_add_events (nb, GDK_SCROLL_MASK);
   g_signal_connect (nb,
                     "scroll-event",
                     G_CALLBACK (capplet_notebook_scroll_event_cb),
                     NULL);
+  g_signal_connect (nb,
+                    "switch-page",
+                    G_CALLBACK (main_notebook_switch_page_cb),
+                    data);
 
   if (start_page != NULL) {
     gchar *page_name;

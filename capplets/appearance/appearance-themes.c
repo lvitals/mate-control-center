@@ -54,6 +54,7 @@ static const GtkTargetEntry drop_types[] =
 };
 
 static void theme_message_area_update(AppearanceData* data);
+static void theme_details_changed_cb(AppearanceData* data);
 
 static time_t theme_get_mtime(const char* name)
 {
@@ -331,12 +332,13 @@ theme_is_equal (const MateThemeMetaInfo *a, const MateThemeMetaInfo *b)
       strcmp (a->marco_theme_name, b->marco_theme_name))
     return FALSE;
 
-  if (!(a->cursor_theme_name && b->cursor_theme_name) ||
-      strcmp (a->cursor_theme_name, b->cursor_theme_name))
-    return FALSE;
+  if (a->cursor_theme_name && b->cursor_theme_name) {
+    if (strcmp (a->cursor_theme_name, b->cursor_theme_name))
+      return FALSE;
 
-  if (a->cursor_size != b->cursor_size)
-    return FALSE;
+    if (a->cursor_size != b->cursor_size)
+      return FALSE;
+  }
 
   a_set = a->gtk_color_scheme && strcmp (a->gtk_color_scheme, "");
   b_set = b->gtk_color_scheme && strcmp (b->gtk_color_scheme, "");
@@ -776,7 +778,10 @@ theme_selection_changed_cb (GtkWidget *icon_view, AppearanceData *data)
       theme = mate_theme_meta_info_find (name);
 
     if (theme) {
+      data->applying_theme = TRUE;
       mate_meta_theme_set (theme);
+      data->applying_theme = FALSE;
+      theme_details_changed_cb (data);
       theme_message_area_update (data);
     }
 
@@ -856,6 +861,9 @@ theme_details_changed_cb (AppearanceData *data)
   const MateThemeMetaInfo *selected;
   GtkIconView *icon_view;
   gboolean done = FALSE;
+
+  if (data->applying_theme)
+    return;
 
   /* load new state from gsettings */
   gsettings_theme = theme_load_from_gsettings (data);

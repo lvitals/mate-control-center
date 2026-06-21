@@ -202,9 +202,73 @@ void mate_wp_item_free (MateWPItem * item) {
   if (item->bg)
     g_object_unref (item->bg);
 
+  g_clear_pointer (&item->thumbnail_cache, g_hash_table_destroy);
   gtk_tree_row_reference_free (item->rowref);
 
   g_free (item);
+}
+
+static guint
+mate_wp_item_thumbnail_key (gint width,
+                            gint height)
+{
+  return ((guint) width << 16) | (guint) height;
+}
+
+void
+mate_wp_item_invalidate_thumbnail (MateWPItem *item)
+{
+  if (item == NULL)
+    return;
+
+  g_clear_pointer (&item->thumbnail_cache, g_hash_table_destroy);
+}
+
+gboolean
+mate_wp_item_has_cached_thumbnail (MateWPItem *item,
+                                   gint        width,
+                                   gint        height)
+{
+  return item != NULL &&
+         item->thumbnail_cache != NULL &&
+         g_hash_table_contains (item->thumbnail_cache,
+                                GUINT_TO_POINTER (mate_wp_item_thumbnail_key (width, height)));
+}
+
+static void
+mate_wp_item_cache_thumbnail (MateWPItem *item,
+                              GdkPixbuf  *pixbuf,
+                              gint        width,
+                              gint        height)
+{
+  if (item == NULL || pixbuf == NULL)
+    return;
+
+  if (item->thumbnail_cache == NULL)
+    item->thumbnail_cache = g_hash_table_new_full (g_direct_hash,
+                                                   g_direct_equal,
+                                                   NULL,
+                                                   g_object_unref);
+
+  g_hash_table_replace (item->thumbnail_cache,
+                        GUINT_TO_POINTER (mate_wp_item_thumbnail_key (width, height)),
+                        g_object_ref (pixbuf));
+}
+
+static GdkPixbuf *
+mate_wp_item_lookup_cached_thumbnail (MateWPItem *item,
+                                      gint        width,
+                                      gint        height)
+{
+  GdkPixbuf *pixbuf;
+
+  if (!mate_wp_item_has_cached_thumbnail (item, width, height))
+    return NULL;
+
+  pixbuf = g_hash_table_lookup (item->thumbnail_cache,
+                                GUINT_TO_POINTER (mate_wp_item_thumbnail_key (width, height)));
+
+  return pixbuf ? g_object_ref (pixbuf) : NULL;
 }
 
 static GdkPixbuf *
@@ -235,12 +299,161 @@ add_slideshow_frame (GdkPixbuf *pixbuf)
   return tmp;
 }
 
+static GdkPixbuf *
+create_cover_thumbnail (GdkPixbuf *pixbuf,
+                        gint       width,
+                        gint       height)
+{
+  GdkPixbuf *scaled;
+  GdkPixbuf *framed;
+  gint source_width;
+  gint source_height;
+  gint scaled_width;
+  gint scaled_height;
+  gint src_x;
+  gint src_y;
+
+  source_width = gdk_pixbuf_get_width (pixbuf);
+  source_height = gdk_pixbuf_get_height (pixbuf);
+
+  if (source_width <= 0 || source_height <= 0 || width <= 0 || height <= 0)
+    return NULL;
+
+  if (source_width * height > source_height * width) {
+    scaled_height = height;
+    scaled_width = (source_width * height + source_height - 1) / source_height;
+  } else {
+    scaled_width = width;
+    scaled_height = (source_height * width + source_width - 1) / source_width;
+  }
+
+  scaled = gdk_pixbuf_scale_simple (pixbuf,
+                                    scaled_width,
+                                    scaled_height,
+                                    GDK_INTERP_BILINEAR);
+  if (scaled == NULL)
+    return NULL;
+
+  framed = gdk_pixbuf_new (GDK_COLORSPACE_RGB, TRUE, 8, width, height);
+  gdk_pixbuf_fill (framed, 0x00000000);
+
+  src_x = MAX ((scaled_width - width) / 2, 0);
+  src_y = MAX ((scaled_height - height) / 2, 0);
+  gdk_pixbuf_copy_area (scaled,
+                        src_x,
+                        src_y,
+                        MIN (width, scaled_width),
+                        MIN (height, scaled_height),
+                        framed,
+                        0,
+                        0);
+  g_object_unref (scaled);
+
+  return framed;
+}
+
+static GdkPixbuf *
+mate_wp_item_get_image_thumbnail (MateWPItem *item,
+                                  MateDesktopThumbnailFactory *thumbs,
+                                  gint        width,
+                                  gint        height)
+{
+  GdkPixbuf *pixbuf;
+  GdkPixbuf *framed;
+  GError *error = NULL;
+  gint image_width = 0;
+  gint image_height = 0;
+
+  if (item->filename == NULL || item->fileinfo == NULL ||
+      item->fileinfo->mime_type == NULL ||
+      !g_str_has_prefix (item->fileinfo->mime_type, "image/"))
+    return NULL;
+
+  if (item->fileinfo->thumburi != NULL) {
+    pixbuf = gdk_pixbuf_new_from_file (item->fileinfo->thumburi, NULL);
+    if (pixbuf != NULL) {
+      framed = create_cover_thumbnail (pixbuf, width, height);
+      g_object_unref (pixbuf);
+
+      if (framed != NULL)
+        return framed;
+    }
+  }
+
+  gdk_pixbuf_get_file_info (item->filename, &image_width, &image_height);
+
+  if (image_width > 0 && image_height > 0) {
+    gint scaled_width;
+    gint scaled_height;
+
+    if (image_width * height > image_height * width) {
+      scaled_height = height;
+      scaled_width = (image_width * height + image_height - 1) / image_height;
+    } else {
+      scaled_width = width;
+      scaled_height = (image_height * width + image_width - 1) / image_width;
+    }
+
+    pixbuf = gdk_pixbuf_new_from_file_at_scale (item->filename,
+                                                scaled_width,
+                                                scaled_height,
+                                                TRUE,
+                                                &error);
+  } else {
+    pixbuf = gdk_pixbuf_new_from_file_at_scale (item->filename,
+                                                width,
+                                                height,
+                                                TRUE,
+                                                &error);
+  }
+
+  if (pixbuf == NULL) {
+    g_warning ("Could not create wallpaper thumbnail for '%s': %s",
+               item->filename,
+               error ? error->message : "unknown error");
+    g_clear_error (&error);
+    return NULL;
+  }
+
+  item->width = image_width > 0 ? image_width : gdk_pixbuf_get_width (pixbuf);
+  item->height = image_height > 0 ? image_height : gdk_pixbuf_get_height (pixbuf);
+
+  framed = create_cover_thumbnail (pixbuf, width, height);
+
+  if (framed != NULL && thumbs != NULL) {
+    mate_desktop_thumbnail_factory_save_thumbnail (thumbs,
+                                                   pixbuf,
+                                                   item->filename,
+                                                   item->fileinfo->mtime);
+    g_free (item->fileinfo->thumburi);
+    item->fileinfo->thumburi = mate_desktop_thumbnail_factory_lookup (thumbs,
+                                                                      item->filename,
+                                                                      item->fileinfo->mtime);
+  }
+
+  g_object_unref (pixbuf);
+
+  return framed;
+}
+
 GdkPixbuf * mate_wp_item_get_frame_thumbnail (MateWPItem * item,
 					       MateDesktopThumbnailFactory * thumbs,
                                                int width,
                                                int height,
                                                gint frame) {
   GdkPixbuf *pixbuf = NULL;
+
+  if (frame == -1 && mate_wp_item_has_cached_thumbnail (item, width, height))
+    return mate_wp_item_lookup_cached_thumbnail (item, width, height);
+
+  if (frame == -1 && g_strcmp0 (item->filename, "(none)") != 0 &&
+      item->fileinfo != NULL &&
+      item->fileinfo->mime_type != NULL &&
+      g_str_has_prefix (item->fileinfo->mime_type, "image/")) {
+    pixbuf = mate_wp_item_get_image_thumbnail (item, thumbs, width, height);
+    mate_wp_item_cache_thumbnail (item, pixbuf, width, height);
+    return pixbuf;
+  }
 
   set_bg_properties (item);
 
@@ -259,6 +472,9 @@ GdkPixbuf * mate_wp_item_get_frame_thumbnail (MateWPItem * item,
     }
 
   mate_bg_get_image_size (item->bg, thumbs, width, height, &item->width, &item->height);
+
+  if (frame == -1)
+    mate_wp_item_cache_thumbnail (item, pixbuf, width, height);
 
   return pixbuf;
 }
