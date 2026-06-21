@@ -1,53 +1,136 @@
 [![Translation status](https://translate.fedoraproject.org/widget/mate-desktop/svg-badge.svg)](https://translate.fedoraproject.org/engage/mate-desktop/)
 
-MATE Control Center
-====================
+# MATE Control Center
 
-About -
+MATE Control Center (`mate-control-center`) is the main configuration interface for the MATE Desktop Environment. It provides a centralized hub grouping various control panels (capplets) to customize and manage mouse behavior, keyboard layouts, display settings, window management, accessibility options, system font choices, and general look-and-feel preferences.
 
-The control center is MATE's main interface for configuration of various
-aspects of your desktop.
+---
 
-Installation -
+## Dependencies
 
-./autogen.sh
+To build MATE Control Center from source, you will need the following tools and libraries installed on your system.
+
+### Build Tools & Utilities
+* C Compiler (GCC or Clang)
+* Autotools (Autoconf, Automake, Libtool, pkg-config) - *only required for the legacy build system*
+* Meson Build System (version `0.57.0` or higher)
+* Ninja build backend
+* Git
+* Gettext / Translation tools
+
+### Library Dependencies
+* **GLib / GIO / GIO-Unix** (>= 2.64.0)
+* **GTK+ 3** (>= 3.22.0)
+* **MATE Desktop Library** (`mate-desktop-2.0` >= 1.27.1)
+* **Libmarco-private** (>= 1.29.0)
+* **Libmate-menu** (>= 1.21.0)
+* **Libxml-2.0**
+* **Pango**
+* **X11 Libraries**: `x11` (>= 1.8), `xcursor`, `xi` (>= 1.5), `xext`, `xscrnsaver`
+* **dconf** (>= 0.13.4)
+* **Fontconfig**
+* **Libgtop-2.0**
+* **Udisks2**
+* **Polkit-gobject-1**
+* **Libmatekbd / Libmatekbdui** (>= 1.17.0)
+* **Libxklavier** (>= 5.2)
+* **Wayland-client**
+* **Freetype2**
+
+### Optional Library Dependencies
+* **Accountsservice** (>= 0.6.39, optional, enables system user account management integration)
+* **Libappindicator / Ayatana AppIndicator** (optional, enables tray/status notifier support)
+
+---
+
+## Building and Installing
+
+### 1. Initialize and Update Submodules
+If you are building as part of the MATE Desktop suite or from a repository setup that references external submodules, ensure all submodules are fully initialized and updated before configuring the build:
+
+```bash
+git submodule update --init --recursive
+```
+
+### 2. Configure the Build (Meson)
+Use Meson to configure the build. It is recommended to use the standard installation directories matching your system layout:
+
+```bash
+meson setup builddir \
+  --prefix=/usr \
+  --sysconfdir=/etc \
+  --localstatedir=/var \
+  --buildtype=plain
+```
+
+#### Custom Build Options
+You can configure optional features using `-D<option>=<value>`. Available options include:
+
+| Option | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `accountsservice` | feature | `auto` | Enable AccountsService support |
+| `libappindicator` | string | `auto` | Enable AppIndicator support (`auto`, `yes`, `no`) |
+
+*Example (disabling AppIndicator and enabling AccountsService support explicitly):*
+```bash
+meson setup builddir -Dlibappindicator=no -Daccountsservice=enabled
+```
+
+### 3. Compile the Code
+Compile the project using the configured build directory:
+
+```bash
+meson compile -C builddir
+```
+
+### 4. Install the Control Center
+Install the compiled binaries, desktop actions, and data files to the system:
+
+```bash
+sudo meson install -C builddir
+```
+
+---
+
+## Legacy Autotools Build (Reference)
+
+For environments still relying on the legacy Autotools build system:
+
+```bash
+./autogen.sh \
+  --prefix=/usr \
+  --sysconfdir=/etc \
+  --localstatedir=/var
 make
-make install
+sudo make install
+```
 
-How to report bugs -
+---
 
-Bugs should be reported to the MATE bug tracking system under github:
-	https://github.com/mate-desktop/mate-control-center/issues
+## How to Report Bugs
 
-In the report please include the following information -
+If you encounter any issues or want to request features, please report them to our GitHub issue tracker:
 
-	Operating system and version
-	For Linux, version of the C and glib libraries
-	How to reproduce the bug if possible
-	If the bug was a crash, include the exact text that was printed out
-	A stacktrace where possible [see below]
+[MATE Control Center Issue Tracker](https://github.com/mate-desktop/mate-control-center/issues)
 
-How to get a stack trace -
+In the report, please include the following information:
+* Operating system name and version.
+* Versions of C compiler, glib, and GTK+ libraries.
+* Step-by-step instructions to reproduce the bug.
+* If the bug is a crash, the exact output text or a full backtrace.
 
-If the crash is reproducible, it is possible to get a stack trace and
-attach it to the bug report. The following steps are used to obtain a
-stack trace -
-
-	Run the program in gdb [the GNU debugger] or any other debugger
-		ie. gdb mate-keyboard-properties
-	Start the program
-		ie. (gdb) run
-	Reproduce the crash and the program will exit to the gdb prompt
-	Get the back trace
-		ie. (gdb) bt full
-
-Once you have the backtrace, copy and paste this either into the
-'Comments' field or attach a file with it included.
-
-
-Patches -
-
-Patches should be submitted to github as pull requests:
-	https://github.com/mate-desktop/mate-control-center/pulls
-	https://help.github.com/articles/fork-a-repo
-	https://help.github.com/articles/using-pull-requests
+### How to Get a Stack Trace
+If a crash is reproducible, you can obtain a detailed backtrace using `gdb` (the GNU Debugger):
+1. Run the target configuration utility under the debugger:
+   ```bash
+   gdb mate-keyboard-properties
+   ```
+2. Start the program execution:
+   ```bash
+   (gdb) run
+   ```
+3. Reproduce the crash. Once the program exits to the `gdb` prompt, query the backtrace:
+   ```bash
+   (gdb) bt full
+   ```
+4. Copy and paste the debugger output into the GitHub issue description.
