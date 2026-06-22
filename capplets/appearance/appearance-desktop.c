@@ -954,9 +954,27 @@ reload_item (GtkTreeModel *model,
     gtk_list_store_set (GTK_LIST_STORE (data->wp_model), iter, 0, pixbuf, -1);
     g_object_unref (pixbuf);
   } else {
-    gtk_list_store_set (GTK_LIST_STORE (data->wp_model), iter,
-                        0, wp_get_loading_thumbnail (data),
-                        -1);
+    GdkPixbuf *old_pixbuf = NULL;
+    GdkPixbuf *loading = wp_get_loading_thumbnail (data);
+
+    gtk_tree_model_get (model, iter, 0, &old_pixbuf, -1);
+
+    if (old_pixbuf != NULL && old_pixbuf != loading) {
+      GdkPixbuf *scaled = gdk_pixbuf_scale_simple (old_pixbuf,
+                                                   data->thumb_width,
+                                                   data->thumb_height,
+                                                   GDK_INTERP_BILINEAR);
+      if (scaled) {
+        gtk_list_store_set (GTK_LIST_STORE (data->wp_model), iter, 0, scaled, -1);
+        g_object_unref (scaled);
+      }
+      g_object_unref (old_pixbuf);
+    } else {
+      if (old_pixbuf) g_object_unref (old_pixbuf);
+      gtk_list_store_set (GTK_LIST_STORE (data->wp_model), iter,
+                          0, loading,
+                          -1);
+    }
     wp_queue_thumbnail (data, item);
   }
 
@@ -985,9 +1003,21 @@ get_monitor_aspect_ratio_for_widget (GtkWidget *widget)
 }
 
 #define LIST_IMAGE_SIZE_MIN 128
-#define LIST_IMAGE_SIZE_MAX 240
 #define LIST_IMAGE_CELL_TARGET_WIDTH 210
-#define LIST_IMAGE_CELL_PADDING 22
+#define LIST_IMAGE_CELL_PADDING 0
+#define LIST_IMAGE_RESIZE_DELAY_MS 350
+
+static gboolean wp_ignore_button_drag = FALSE;
+
+static gint
+get_wp_view_available_width (AppearanceData *data)
+{
+  gint width;
+
+  width = gtk_widget_get_allocated_width (GTK_WIDGET (data->wp_view));
+
+  return width > 0 ? width : LIST_IMAGE_CELL_TARGET_WIDTH;
+}
 
 static void
 calculate_thumbnail_sizes (AppearanceData *data,
@@ -1001,16 +1031,25 @@ calculate_thumbnail_sizes (AppearanceData *data,
   gint list_image_size;
 
   aspect = get_monitor_aspect_ratio_for_widget (GTK_WIDGET (data->wp_view));
-  view_width = gtk_widget_get_allocated_width (GTK_WIDGET (data->wp_view));
-  if (view_width <= 0)
-    view_width = LIST_IMAGE_CELL_TARGET_WIDTH;
+  view_width = get_wp_view_available_width (data);
 
-  columns = MAX (1, view_width / LIST_IMAGE_CELL_TARGET_WIDTH);
-  *item_width = MAX (LIST_IMAGE_SIZE_MIN + LIST_IMAGE_CELL_PADDING,
-                     view_width / columns);
-  list_image_size = CLAMP (*item_width - LIST_IMAGE_CELL_PADDING,
-                           LIST_IMAGE_SIZE_MIN,
-                           LIST_IMAGE_SIZE_MAX);
+  columns = view_width / LIST_IMAGE_CELL_TARGET_WIDTH;
+  if (columns < 1)
+    columns = 1;
+
+  while (columns > 1 && (view_width / columns) < LIST_IMAGE_SIZE_MIN) {
+    columns--;
+  }
+
+  *item_width = view_width / columns;
+  if (*item_width > view_width)
+    *item_width = view_width;
+
+  list_image_size = *item_width - LIST_IMAGE_CELL_PADDING;
+  if (list_image_size < 16)
+    list_image_size = 16;
+  if (list_image_size > 420)
+    list_image_size = 420;
 
   if (aspect > 1) {
     /* portrait */
@@ -1036,6 +1075,8 @@ compute_thumbnail_sizes (AppearanceData *data)
                              &item_width);
 
   gtk_icon_view_set_item_width (data->wp_view, item_width);
+  gtk_widget_set_margin_start (GTK_WIDGET (data->wp_view), 0);
+  gtk_widget_set_margin_end (GTK_WIDGET (data->wp_view), 0);
 
   return old_width != data->thumb_width || old_height != data->thumb_height;
 }
@@ -1253,14 +1294,20 @@ wp_button_press_cb (GtkWidget      *widget,
                     AppearanceData *data)
 {
   GtkCellRenderer *cell;
+  GtkCellRenderer *thumbnail_cell;
   GdkEventButton *button_event = (GdkEventButton *) event;
+  GdkRectangle cell_rect;
+  GList *cells;
+  GtkTreePath *path = NULL;
 
   if (event->type != GDK_BUTTON_PRESS)
     return FALSE;
 
+  wp_ignore_button_drag = FALSE;
+
   if (gtk_icon_view_get_item_at_pos (GTK_ICON_VIEW (widget),
                                      button_event->x, button_event->y,
-                                     NULL, &cell)) {
+                                     &path, &cell)) {
     if (g_object_get_data (G_OBJECT (cell), "buttons")) {
       gint w, h;
       GtkCellRenderer *cell2 = NULL;
@@ -1271,8 +1318,55 @@ wp_button_press_cb (GtkWidget      *widget,
         next_frame (data, cell, -1);
       else
         next_frame (data, cell, 1);
+      gtk_tree_path_free (path);
       return TRUE;
     }
+
+    cells = gtk_cell_layout_get_cells (GTK_CELL_LAYOUT (data->wp_view));
+    thumbnail_cell = cells ? cells->data : NULL;
+    if (cell != thumbnail_cell ||
+        !gtk_icon_view_get_cell_rect (GTK_ICON_VIEW (widget), path,
+                                      thumbnail_cell, &cell_rect) ||
+        button_event->x < cell_rect.x ||
+        button_event->x >= cell_rect.x + cell_rect.width ||
+        button_event->y < cell_rect.y ||
+        button_event->y >= cell_rect.y + cell_rect.height) {
+      wp_ignore_button_drag = TRUE;
+      g_list_free (cells);
+      gtk_tree_path_free (path);
+      return TRUE;
+    }
+
+    g_list_free (cells);
+    gtk_tree_path_free (path);
+  } else {
+    wp_ignore_button_drag = TRUE;
+    return TRUE;
+  }
+
+  return FALSE;
+}
+
+static gboolean
+wp_motion_notify_cb (GtkWidget      *widget,
+                     GdkEventMotion *event,
+                     AppearanceData *data)
+{
+  if (wp_ignore_button_drag &&
+      (event->state & (GDK_BUTTON1_MASK | GDK_BUTTON2_MASK | GDK_BUTTON3_MASK)))
+    return TRUE;
+
+  return FALSE;
+}
+
+static gboolean
+wp_button_release_cb (GtkWidget      *widget,
+                      GdkEventButton *event,
+                      AppearanceData *data)
+{
+  if (wp_ignore_button_drag) {
+    wp_ignore_button_drag = FALSE;
+    return TRUE;
   }
 
   return FALSE;
@@ -1348,13 +1442,17 @@ wp_view_size_allocate_cb (GtkWidget     *widget,
   gint item_width;
 
   calculate_thumbnail_sizes (data, &thumb_width, &thumb_height, &item_width);
+  gtk_icon_view_set_item_width (data->wp_view, item_width);
+  gtk_widget_set_margin_start (GTK_WIDGET (data->wp_view), 0);
+  gtk_widget_set_margin_end (GTK_WIDGET (data->wp_view), 0);
+
   if (thumb_width == data->thumb_width && thumb_height == data->thumb_height)
     return;
 
   if (data->wp_resize_timeout_id != 0)
     g_source_remove (data->wp_resize_timeout_id);
 
-  data->wp_resize_timeout_id = g_timeout_add (160,
+  data->wp_resize_timeout_id = g_timeout_add (LIST_IMAGE_RESIZE_DELAY_MS,
                                               (GSourceFunc) wp_resize_timeout_cb,
                                               data);
 }
@@ -1424,12 +1522,14 @@ desktop_init (AppearanceData *data,
   gtk_cell_layout_clear (GTK_CELL_LAYOUT (data->wp_view));
 
   cr = gtk_cell_renderer_pixbuf_new ();
-  g_object_set (cr, "xpad", 5, "ypad", 5, NULL);
+  g_object_set (cr, "xpad", 0, "ypad", 0, NULL);
 
   gtk_cell_layout_pack_start (GTK_CELL_LAYOUT (data->wp_view), cr, TRUE);
   gtk_cell_layout_set_attributes (GTK_CELL_LAYOUT (data->wp_view), cr,
                                   "pixbuf", 0,
                                   NULL);
+  gtk_icon_view_set_column_spacing (data->wp_view, 0);
+  gtk_icon_view_set_row_spacing (data->wp_view, 3);
 
   cr = gtk_cell_renderer_pixbuf_new ();
   create_button_images (data);
@@ -1446,6 +1546,10 @@ desktop_init (AppearanceData *data,
                     (GCallback) wp_selected_changed_cb, data);
   g_signal_connect (data->wp_view, "button-press-event",
                     G_CALLBACK (wp_button_press_cb), data);
+  g_signal_connect (data->wp_view, "motion-notify-event",
+                    G_CALLBACK (wp_motion_notify_cb), data);
+  g_signal_connect (data->wp_view, "button-release-event",
+                    G_CALLBACK (wp_button_release_cb), data);
 
   data->frame = -1;
 

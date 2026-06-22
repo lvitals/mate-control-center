@@ -203,6 +203,8 @@ void mate_wp_item_free (MateWPItem * item) {
     g_object_unref (item->bg);
 
   g_clear_pointer (&item->thumbnail_cache, g_hash_table_destroy);
+  if (item->base_pixbuf != NULL)
+    g_object_unref (item->base_pixbuf);
   gtk_tree_row_reference_free (item->rowref);
 
   g_free (item);
@@ -249,6 +251,8 @@ mate_wp_item_cache_thumbnail (MateWPItem *item,
                                                    g_direct_equal,
                                                    NULL,
                                                    g_object_unref);
+  else if (g_hash_table_size (item->thumbnail_cache) > 4)
+    g_hash_table_remove_all (item->thumbnail_cache);
 
   g_hash_table_replace (item->thumbnail_cache,
                         GUINT_TO_POINTER (mate_wp_item_thumbnail_key (width, height)),
@@ -358,7 +362,7 @@ mate_wp_item_get_image_thumbnail (MateWPItem *item,
                                   gint        width,
                                   gint        height)
 {
-  GdkPixbuf *pixbuf;
+  GdkPixbuf *pixbuf = NULL;
   GdkPixbuf *framed;
   GError *error = NULL;
   gint image_width = 0;
@@ -369,9 +373,16 @@ mate_wp_item_get_image_thumbnail (MateWPItem *item,
       !g_str_has_prefix (item->fileinfo->mime_type, "image/"))
     return NULL;
 
+  if (item->base_pixbuf != NULL) {
+    framed = create_cover_thumbnail (item->base_pixbuf, width, height);
+    if (framed != NULL)
+      return framed;
+  }
+
   if (item->fileinfo->thumburi != NULL) {
     pixbuf = gdk_pixbuf_new_from_file (item->fileinfo->thumburi, NULL);
     if (pixbuf != NULL) {
+      item->base_pixbuf = g_object_ref (pixbuf);
       framed = create_cover_thumbnail (pixbuf, width, height);
       g_object_unref (pixbuf);
 
@@ -385,13 +396,19 @@ mate_wp_item_get_image_thumbnail (MateWPItem *item,
   if (image_width > 0 && image_height > 0) {
     gint scaled_width;
     gint scaled_height;
+    gint max_base_size = 512;
 
-    if (image_width * height > image_height * width) {
-      scaled_height = height;
-      scaled_width = (image_width * height + image_height - 1) / image_height;
+    if (image_width > max_base_size || image_height > max_base_size) {
+      if (image_width > image_height) {
+        scaled_width = max_base_size;
+        scaled_height = (image_height * max_base_size) / image_width;
+      } else {
+        scaled_height = max_base_size;
+        scaled_width = (image_width * max_base_size) / image_height;
+      }
     } else {
-      scaled_width = width;
-      scaled_height = (image_height * width + image_width - 1) / image_width;
+      scaled_width = image_width;
+      scaled_height = image_height;
     }
 
     pixbuf = gdk_pixbuf_new_from_file_at_scale (item->filename,
@@ -401,8 +418,8 @@ mate_wp_item_get_image_thumbnail (MateWPItem *item,
                                                 &error);
   } else {
     pixbuf = gdk_pixbuf_new_from_file_at_scale (item->filename,
-                                                width,
-                                                height,
+                                                width > 512 ? width : 512,
+                                                height > 512 ? height : 512,
                                                 TRUE,
                                                 &error);
   }
@@ -417,6 +434,8 @@ mate_wp_item_get_image_thumbnail (MateWPItem *item,
 
   item->width = image_width > 0 ? image_width : gdk_pixbuf_get_width (pixbuf);
   item->height = image_height > 0 ? image_height : gdk_pixbuf_get_height (pixbuf);
+
+  item->base_pixbuf = g_object_ref (pixbuf);
 
   framed = create_cover_thumbnail (pixbuf, width, height);
 

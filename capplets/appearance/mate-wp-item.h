@@ -62,6 +62,7 @@ struct _MateWPItem {
 
   gboolean thumbnail_queued;
   GHashTable *thumbnail_cache;
+  GdkPixbuf *base_pixbuf;
 };
 
 MateWPItem * mate_wp_item_new (const gchar *filename,
