@@ -15,6 +15,8 @@ typedef struct _WMCallbackData
 /* Our WM Window */
 static Window wm_window = None;
 
+static void update_wm_window (void);
+
 static char *
 wm_common_get_window_manager_property (Atom atom)
 {
@@ -26,6 +28,9 @@ wm_common_get_window_manager_property (Atom atom)
   gulong nitems;
   gulong bytes_after;
   gchar *val;
+
+  if (wm_window == None)
+    update_wm_window ();
 
   if (wm_window == None)
     return NULL;
@@ -64,6 +69,17 @@ wm_common_get_window_manager_property (Atom atom)
   return retval;
 }
 
+static gboolean
+is_marco (const gchar *wm_name)
+{
+  if (wm_name == NULL)
+    return FALSE;
+
+  return (g_ascii_strcasecmp (wm_name, "marco") == 0 ||
+          g_ascii_strcasecmp (wm_name, "marco-wayland") == 0 ||
+          g_ascii_strcasecmp (wm_name, WM_COMMON_MARCO) == 0);
+}
+
 char*
 wm_common_get_current_window_manager (void)
 {
@@ -83,7 +99,14 @@ wm_common_get_current_window_manager (void)
 
   result = wm_common_get_window_manager_property (atom);
   if (result)
-    return result;
+    {
+      if (is_marco (result))
+        {
+          g_free (result);
+          return g_strdup (WM_COMMON_MARCO);
+        }
+      return result;
+    }
   else
     return g_strdup (WM_COMMON_UNKNOWN);
 }
@@ -98,7 +121,7 @@ wm_common_get_current_keybindings (void)
     /*This should never reached in wayland as compositors control
      *and limit keybindings
      */
-    char *to_copy[] = { WM_COMMON_MARCO, NULL };
+    char *to_copy[] = { WM_COMMON_MARCO, "marco", "marco-wayland", NULL };
     return g_strdupv (to_copy);
   }
 
@@ -118,11 +141,18 @@ wm_common_get_current_keybindings (void)
     {
       Atom wm_atom = gdk_x11_get_xatom_by_name ("_NET_WM_NAME");
       char *wm_name = wm_common_get_window_manager_property (wm_atom);
-      char *to_copy[] = { NULL, NULL };
 
-      to_copy[0] = wm_name ? wm_name : WM_COMMON_UNKNOWN;
-
-      results = g_strdupv (to_copy);
+      if (is_marco (wm_name))
+        {
+          char *to_copy[] = { WM_COMMON_MARCO, "marco", "marco-wayland", NULL };
+          results = g_strdupv (to_copy);
+        }
+      else
+        {
+          char *to_copy[] = { NULL, NULL };
+          to_copy[0] = wm_name ? wm_name : WM_COMMON_UNKNOWN;
+          results = g_strdupv (to_copy);
+        }
       g_free (wm_name);
     }
 
