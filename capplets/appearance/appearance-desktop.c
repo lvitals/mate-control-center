@@ -1489,7 +1489,7 @@ wp_view_size_allocate_cb (GtkWidget     *widget,
   gint thumb_height;
   gint item_width;
 
-  if (!gtk_widget_get_mapped (widget) || allocation->width <= 100 || allocation->height <= 100)
+  if (allocation->width <= 100 || allocation->height <= 100)
     return;
 
   calculate_thumbnail_sizes (data, &thumb_width, &thumb_height, &item_width);
