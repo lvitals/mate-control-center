@@ -30,6 +30,7 @@
 
 #include <stdlib.h>
 #include <gio/gio.h>
+#include <gdk/gdkx.h>
 
 #include "capplet-util.h"
 #include "activate-settings-daemon.h"
@@ -134,6 +135,7 @@ main (int argc, char **argv)
 	static gboolean apply_only = FALSE;
 	static gboolean switch_to_typing_break_page = FALSE;
 	static gboolean switch_to_a11y_page = FALSE;
+	static gchar *show_page = NULL;
 
 	static GOptionEntry cap_options[] = {
 		{"apply", 0, 0, G_OPTION_ARG_NONE, &apply_only,
@@ -155,6 +157,11 @@ main (int argc, char **argv)
 		 N_
 		 ("Start the page with the accessibility settings showing"),
 		 NULL},
+		{"show-page", 0, 0, G_OPTION_ARG_STRING,
+		 &show_page,
+		 N_
+		 ("Start the page with the specified settings showing"),
+		 NULL},
 		{ NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 	};
 
@@ -166,6 +173,20 @@ main (int argc, char **argv)
 	g_option_context_free (context);
 
 	activate_settings_daemon ();
+
+	/* Initialize preview settings to avoid libmatekbd crash on Wayland */
+	GdkDisplay *gdisplay = gdk_display_get_default ();
+	if (!GDK_IS_X11_DISPLAY (gdisplay)) {
+		GSettings *preview_settings = g_settings_new ("org.mate.peripherals-keyboard-xkb.preview");
+		gint px = g_settings_get_int (preview_settings, "x");
+		if (px == -1) {
+			g_settings_set_int (preview_settings, "x", 100);
+			g_settings_set_int (preview_settings, "y", 100);
+			g_settings_set_int (preview_settings, "width", 800);
+			g_settings_set_int (preview_settings, "height", 600);
+		}
+		g_object_unref (preview_settings);
+	}
 
 	keyboard_settings = g_settings_new (KEYBOARD_SCHEMA);
 	interface_settings = g_settings_new (INTERFACE_SCHEMA);
@@ -181,12 +202,36 @@ main (int argc, char **argv)
                           G_CALLBACK (capplet_notebook_scroll_event_cb),
                           NULL);
 
-	if (switch_to_typing_break_page) {
-		gtk_notebook_set_current_page (nb, 4);
+	if (show_page != NULL) {
+		gint page_idx = -1;
+		if (g_ascii_strcasecmp (show_page, "general") == 0) {
+			page_idx = gtk_notebook_page_num (nb, WID ("vbox2"));
+		} else if (g_ascii_strcasecmp (show_page, "layouts") == 0) {
+			page_idx = gtk_notebook_page_num (nb, WID ("vbox33"));
+		} else if (g_ascii_strcasecmp (show_page, "a11y") == 0 || g_ascii_strcasecmp (show_page, "accessibility") == 0) {
+			page_idx = gtk_notebook_page_num (nb, WID ("vbox77"));
+		} else if (g_ascii_strcasecmp (show_page, "mouse-keys") == 0 || g_ascii_strcasecmp (show_page, "mouse") == 0) {
+			page_idx = gtk_notebook_page_num (nb, WID ("vbox89"));
+		} else if (g_ascii_strcasecmp (show_page, "typing-break") == 0 || g_ascii_strcasecmp (show_page, "break") == 0) {
+			page_idx = gtk_notebook_page_num (nb, WID ("vbox14"));
+		}
+
+		if (page_idx >= 0) {
+			gtk_notebook_set_current_page (nb, page_idx);
+		}
+		g_free (show_page);
+	}
+	else if (switch_to_typing_break_page) {
+		gint page_idx = gtk_notebook_page_num (nb, WID ("vbox14"));
+		if (page_idx >= 0) {
+			gtk_notebook_set_current_page (nb, page_idx);
+		}
 	}
 	else if (switch_to_a11y_page) {
-		gtk_notebook_set_current_page (nb, 2);
-
+		gint page_idx = gtk_notebook_page_num (nb, WID ("vbox77"));
+		if (page_idx >= 0) {
+			gtk_notebook_set_current_page (nb, page_idx);
+		}
 	}
 
 	capplet_set_icon (WID ("keyboard_dialog"),

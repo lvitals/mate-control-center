@@ -27,6 +27,7 @@
 
 #include <string.h>
 #include <gdk/gdkx.h>
+#include <X11/Xlib.h>
 #include <gio/gio.h>
 #include <glib/gi18n.h>
 
@@ -47,6 +48,8 @@ MatekbdDesktopConfig desktop_config;
 
 GSettings *xkb_general_settings;
 GSettings *xkb_kbd_settings;
+
+static Display *xdisplay_opened = NULL;
 
 char *
 xci_desc_to_utf8 (XklConfigItem * ci)
@@ -124,20 +127,41 @@ cleanup_xkb_tabs (GtkBuilder * dialog)
 	xkb_kbd_settings = NULL;
 	g_object_unref (G_OBJECT (xkb_general_settings));
 	xkb_general_settings = NULL;
+
+	if (xdisplay_opened != NULL) {
+		XCloseDisplay (xdisplay_opened);
+		xdisplay_opened = NULL;
+	}
 }
 
 static void
 reset_to_defaults (GtkWidget * button, GtkBuilder * dialog)
 {
-	MatekbdKeyboardConfig empty_kbd_config;
+	MatekbdKeyboardConfig default_config;
 
-	matekbd_keyboard_config_init (&empty_kbd_config, engine);
-	matekbd_keyboard_config_save_to_gsettings (&empty_kbd_config);
-	matekbd_keyboard_config_term (&empty_kbd_config);
+	matekbd_keyboard_config_init (&default_config, engine);
+	matekbd_keyboard_config_load_from_x_initial (&default_config, NULL);
+
+	if (default_config.model == NULL) {
+		default_config.model = g_strdup ("pc105");
+	}
+	if (default_config.layouts_variants == NULL || default_config.layouts_variants[0] == NULL) {
+		if (default_config.layouts_variants != NULL) {
+			g_strfreev (default_config.layouts_variants);
+		}
+		default_config.layouts_variants = g_new0 (gchar *, 2);
+		default_config.layouts_variants[0] = g_strdup ("us");
+		default_config.layouts_variants[1] = NULL;
+	}
+	if (default_config.options == NULL) {
+		default_config.options = g_new0 (gchar *, 1);
+		default_config.options[0] = NULL;
+	}
+
+	matekbd_keyboard_config_save_to_gsettings (&default_config);
+	matekbd_keyboard_config_term (&default_config);
 
 	g_settings_reset (xkb_general_settings, "default-group");
-
-	/* all the rest is g-s-d's business */
 }
 
 static void
@@ -178,19 +202,29 @@ setup_xkb_tabs (GtkBuilder * dialog)
 	GtkWidget *chk_new_windows_inherit_layout =
 	    WID ("chk_new_windows_inherit_layout");
 	GdkDisplay *display = gdk_display_get_default ();
+	Display *xdisplay = NULL;
 
-	if (!GDK_IS_X11_DISPLAY (display)) {
+	if (GDK_IS_X11_DISPLAY (display)) {
+		xdisplay = GDK_DISPLAY_XDISPLAY (display);
+	} else {
+#ifdef GDK_WINDOWING_X11
+		xdisplay_opened = XOpenDisplay (NULL);
+		xdisplay = xdisplay_opened;
+#endif
+	}
+
+	if (!xdisplay) {
 		GtkNotebook *nb = GTK_NOTEBOOK (gtk_builder_get_object (dialog, "keyboard_notebook"));
-		/* Remove Layouts and Options tabs on Wayland */
-		gtk_notebook_remove_page (nb, 1);
-		gtk_notebook_remove_page (nb, 1);
+		gint layouts_page = gtk_notebook_page_num (nb, WID ("vbox33"));
+		if (layouts_page >= 0)
+			gtk_notebook_remove_page (nb, layouts_page);
 		return;
 	}
 
 	xkb_general_settings = g_settings_new (XKB_GENERAL_SCHEMA);
 	xkb_kbd_settings = g_settings_new (XKB_KBD_SCHEMA);
 
-	engine = xkl_engine_get_instance (GDK_DISPLAY_XDISPLAY(display));
+	engine = xkl_engine_get_instance (xdisplay);
 	config_registry = xkl_config_registry_get_instance (engine);
 
 	matekbd_desktop_config_init (&desktop_config, engine);
@@ -229,7 +263,7 @@ setup_xkb_tabs (GtkBuilder * dialog)
 #ifdef HAVE_X11_EXTENSIONS_XKB_H
 	if (strcmp (xkl_engine_get_backend_name (engine), "XKB"))
 #endif
-		gtk_widget_hide (WID ("xkb_layouts_print"));
+		gtk_widget_hide (WID ("xkb_layouts_show"));
 
 	xkb_layouts_prepare_selected_tree (dialog);
 	xkb_layouts_fill_selected_tree (dialog);

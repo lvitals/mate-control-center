@@ -26,6 +26,7 @@
 #endif
 
 #include <string.h>
+#include <gdk/gdkx.h>
 
 #include <libmatekbd/matekbd-keyboard-drawing.h>
 #include <libmatekbd/matekbd-util.h>
@@ -514,7 +515,30 @@ xkb_layout_choose (GtkBuilder * dialog)
 
 	toplevel = gtk_widget_get_toplevel (chooser);
 	if (gtk_widget_is_toplevel (toplevel)) {
-		GdkRectangle *rect = matekbd_preview_load_position ();
+		GdkRectangle *rect = NULL;
+		if (GDK_IS_X11_DISPLAY (gdk_display_get_default ())) {
+			rect = matekbd_preview_load_position ();
+		} else {
+			GSettings *preview_settings = g_settings_new ("org.mate.peripherals-keyboard-xkb.preview");
+			gint px = g_settings_get_int (preview_settings, "x");
+			gint py = g_settings_get_int (preview_settings, "y");
+			gint pw = g_settings_get_int (preview_settings, "width");
+			gint ph = g_settings_get_int (preview_settings, "height");
+			g_object_unref (preview_settings);
+
+			rect = g_new (GdkRectangle, 1);
+			if (px == -1 || py == -1 || pw == -1 || ph == -1) {
+				rect->x = 100;
+				rect->y = 100;
+				rect->width = 800;
+				rect->height = 600;
+			} else {
+				rect->x = px;
+				rect->y = py;
+				rect->width = pw;
+				rect->height = ph;
+			}
+		}
 		if (rect != NULL) {
 			gtk_window_move (GTK_WINDOW (toplevel),
 					 rect->x, rect->y);
