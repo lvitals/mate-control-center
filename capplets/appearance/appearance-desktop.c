@@ -244,11 +244,18 @@ wp_add_image (AppearanceData *data,
               const gchar *filename)
 {
   MateWPItem *item;
+  gchar *local_path = NULL;
 
   if (!filename)
     return NULL;
 
-  item = g_hash_table_lookup (data->wp_hash, filename);
+  if (g_str_has_prefix (filename, "file://")) {
+    local_path = g_filename_from_uri (filename, NULL, NULL);
+  }
+
+  const gchar *lookup_path = local_path ? local_path : filename;
+
+  item = g_hash_table_lookup (data->wp_hash, lookup_path);
 
   if (item != NULL)
   {
@@ -260,7 +267,7 @@ wp_add_image (AppearanceData *data,
   }
   else
   {
-    item = mate_wp_item_new (filename, data->wp_hash, data->thumb_factory);
+    item = mate_wp_item_new (lookup_path, data->wp_hash, data->thumb_factory);
 
     if (item != NULL)
     {
@@ -268,6 +275,7 @@ wp_add_image (AppearanceData *data,
     }
   }
 
+  g_free (local_path);
   return item;
 }
 

@@ -166,14 +166,24 @@ static void mate_wp_xml_load_xml(AppearanceData* data, const char* filename)
 
 				if (!strcmp ((char*) wpa->name, "filename"))
 				{
-					if (wpa->last != NULL && wpa->last->content != NULL)
+					xmlChar* node_content = xmlNodeGetContent(wpa);
+					if (node_content != NULL)
 					{
 						const char* none = "(none)";
-						char* content = g_strstrip((char*) wpa->last->content);
+						char* content = (char*) node_content;
+						g_strstrip (content);
 
 						if (!strcmp (content, none))
 						{
 							wp->filename = g_strdup (content);
+						}
+						else if (g_str_has_prefix (content, "file://"))
+						{
+							wp->filename = g_filename_from_uri (content, NULL, NULL);
+							if (wp->filename == NULL)
+							{
+								wp->filename = g_strdup (content);
+							}
 						}
 						else if (g_utf8_validate (content, -1, NULL) && g_file_test (content, G_FILE_TEST_EXISTS))
 						{
@@ -183,31 +193,31 @@ static void mate_wp_xml_load_xml(AppearanceData* data, const char* filename)
 						{
 							wp->filename = g_filename_from_utf8 (content, -1, NULL, NULL, NULL);
 						}
-					}
-					else
-					{
-						break;
+						xmlFree (node_content);
 					}
 				}
 				else if (!strcmp ((char*) wpa->name, "name"))
 				{
-					if (wpa->last != NULL && wpa->last->content != NULL)
+					xmlChar* node_content = xmlNodeGetContent(wpa);
+					if (node_content != NULL)
 					{
-						nodelang = xmlNodeGetLang (wpa->last);
+						char* content = (char*) node_content;
+						g_strstrip (content);
+						nodelang = xmlNodeGetLang (wpa);
 
 						if (wp->name == NULL && nodelang == NULL)
 						{
-							wp->name = g_strdup (g_strstrip ((char *)wpa->last->content));
+							wp->name = g_strdup (content);
 						}
 #ifdef ENABLE_NLS
-						else
+						else if (nodelang != NULL)
 						{
 							for (i = 0; syslangs[i] != NULL; i++)
 							{
 								if (!strcmp (syslangs[i], (char *)nodelang))
 								{
 									g_free (wp->name);
-									wp->name = g_strdup (g_strstrip ((char*) wpa->last->content));
+									wp->name = g_strdup (content);
 									break;
 								}
 							}
@@ -215,48 +225,65 @@ static void mate_wp_xml_load_xml(AppearanceData* data, const char* filename)
 #endif /* ENABLE_NLS */
 
 						xmlFree (nodelang);
-					}
-					else
-					{
-						break;
+						xmlFree (node_content);
 					}
 				}
 				else if (!strcmp ((char*) wpa->name, "options"))
 				{
-					if (wpa->last != NULL)
+					xmlChar* node_content = xmlNodeGetContent(wpa);
+					if (node_content != NULL)
 					{
-						wp->options = wp_item_string_to_option(g_strstrip ((char *)wpa->last->content));
+						char* content = (char*) node_content;
+						g_strstrip (content);
+						wp->options = wp_item_string_to_option (content);
 						have_scale = TRUE;
+						xmlFree (node_content);
 					}
 				}
 				else if (!strcmp ((char*) wpa->name, "shade_type"))
 				{
-					if (wpa->last != NULL)
+					xmlChar* node_content = xmlNodeGetContent(wpa);
+					if (node_content != NULL)
 					{
-						wp->shade_type = wp_item_string_to_shading(g_strstrip ((char *)wpa->last->content));
+						char* content = (char*) node_content;
+						g_strstrip (content);
+						wp->shade_type = wp_item_string_to_shading (content);
 						have_shade = TRUE;
+						xmlFree (node_content);
 					}
 				}
 				else if (!strcmp ((char*) wpa->name, "pcolor"))
 				{
-					if (wpa->last != NULL)
+					xmlChar* node_content = xmlNodeGetContent(wpa);
+					if (node_content != NULL)
 					{
-						pcolor = g_strdup(g_strstrip ((char *)wpa->last->content));
+						char* content = (char*) node_content;
+						g_strstrip (content);
+						pcolor = g_strdup (content);
+						xmlFree (node_content);
 					}
 				}
 				else if (!strcmp ((char*) wpa->name, "scolor"))
 				{
-					if (wpa->last != NULL)
+					xmlChar* node_content = xmlNodeGetContent(wpa);
+					if (node_content != NULL)
 					{
-						scolor = g_strdup(g_strstrip ((char *)wpa->last->content));
+						char* content = (char*) node_content;
+						g_strstrip (content);
+						scolor = g_strdup (content);
+						xmlFree (node_content);
 					}
 				}
 				else if (!strcmp ((char*) wpa->name, "artist"))
 				{
-					if (wpa->last != NULL)
+					xmlChar* node_content = xmlNodeGetContent(wpa);
+					if (node_content != NULL)
 					{
-						wp->artist = g_strdup (g_strstrip ((char *)wpa->last->content));
+						char* content = (char*) node_content;
+						g_strstrip (content);
+						wp->artist = g_strdup (content);
 						have_artist = TRUE;
+						xmlFree (node_content);
 					}
 				}
 				else if (!strcmp ((char*) wpa->name, "text"))
@@ -450,11 +477,19 @@ void mate_wp_xml_load_list(AppearanceData* data)
 	mate_wp_xml_load_from_dir(datadir, data);
 	g_free(datadir);
 
+	datadir = g_build_filename(g_get_user_data_dir(), "gnome-background-properties", NULL);
+	mate_wp_xml_load_from_dir(datadir, data);
+	g_free(datadir);
+
 	system_data_dirs = g_get_system_data_dirs();
 
 	for (i = 0; system_data_dirs[i]; i++)
 	{
 		datadir = g_build_filename(system_data_dirs[i], "mate-background-properties", NULL);
+		mate_wp_xml_load_from_dir(datadir, data);
+		g_free (datadir);
+
+		datadir = g_build_filename(system_data_dirs[i], "gnome-background-properties", NULL);
 		mate_wp_xml_load_from_dir(datadir, data);
 		g_free (datadir);
 	}

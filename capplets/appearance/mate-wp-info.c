@@ -38,8 +38,6 @@ MateWPInfo* mate_wp_info_new(const char* uri, MateDesktopThumbnailFactory* thumb
 		G_FILE_QUERY_INFO_NONE,
 		NULL, NULL);
 
-	g_object_unref(file);
-
 	if (info == NULL || g_file_info_get_content_type (info) == NULL)
 	{
 		if (!strcmp (uri, "(none)"))
@@ -60,7 +58,7 @@ MateWPInfo* mate_wp_info_new(const char* uri, MateDesktopThumbnailFactory* thumb
 	{
 		wp = g_new0 (MateWPInfo, 1);
 
-		wp->uri = g_strdup(uri);
+		wp->uri = g_file_get_uri (file);
 
 		wp->name = g_strdup(g_file_info_get_name(info));
 
@@ -72,13 +70,15 @@ MateWPInfo* mate_wp_info_new(const char* uri, MateDesktopThumbnailFactory* thumb
 		wp->size = g_file_info_get_size(info);
 		wp->mtime = g_file_info_get_attribute_uint64(info, G_FILE_ATTRIBUTE_TIME_MODIFIED);
 
-		wp->thumburi = mate_desktop_thumbnail_factory_lookup(thumbs, uri, wp->mtime);
+		wp->thumburi = mate_desktop_thumbnail_factory_lookup(thumbs, wp->uri, wp->mtime);
 	}
 
 	if (info != NULL)
 	{
 		g_object_unref(info);
 	}
+
+	g_object_unref(file);
 
 	return wp;
 }

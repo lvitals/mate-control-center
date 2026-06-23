@@ -156,12 +156,20 @@ MateWPItem * mate_wp_item_new (const gchar * filename,
 				 MateDesktopThumbnailFactory * thumbnails) {
   MateWPItem *item = g_new0 (MateWPItem, 1);
 
-  item->filename = g_strdup (filename);
-  item->fileinfo = mate_wp_info_new (filename, thumbnails);
+  if (g_str_has_prefix (filename, "file://")) {
+    item->filename = g_filename_from_uri (filename, NULL, NULL);
+    if (item->filename == NULL) {
+      item->filename = g_strdup (filename);
+    }
+  } else {
+    item->filename = g_strdup (filename);
+  }
+  item->fileinfo = mate_wp_info_new (item->filename, thumbnails);
 
   if (item->fileinfo != NULL && item->fileinfo->mime_type != NULL &&
       (g_str_has_prefix (item->fileinfo->mime_type, "image/") ||
-       strcmp (item->fileinfo->mime_type, "application/xml") == 0)) {
+       strcmp (item->fileinfo->mime_type, "application/xml") == 0 ||
+       strcmp (item->fileinfo->mime_type, "text/xml") == 0)) {
 
     if (g_utf8_validate (item->fileinfo->name, -1, NULL))
       item->name = g_strdup (item->fileinfo->name);
@@ -524,7 +532,8 @@ void mate_wp_item_update_description (MateWPItem * item) {
     else
       artist = g_strdup (item->artist);
 
-    if (strcmp (item->fileinfo->mime_type, "application/xml") == 0)
+    if (strcmp (item->fileinfo->mime_type, "application/xml") == 0 ||
+        strcmp (item->fileinfo->mime_type, "text/xml") == 0)
       {
         if (mate_bg_changes_with_time (item->bg))
           description = g_strdup (_("Slide Show"));
