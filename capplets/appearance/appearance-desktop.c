@@ -1014,17 +1014,22 @@ get_monitor_aspect_ratio_for_widget (GtkWidget *widget)
 #define LIST_IMAGE_CELL_TARGET_WIDTH 210
 #define LIST_IMAGE_CELL_PADDING 0
 #define LIST_IMAGE_RESIZE_DELAY_MS 50
+#define LIST_IMAGE_MIN_VIEW_WIDTH 100
+#define LIST_IMAGE_DEFAULT_VIEW_WIDTH 730
+#define LIST_IMAGE_ASPECT_FALLBACK (9.0 / 16.0)
+#define LIST_IMAGE_ASPECT_MAX 10.0
+#define LIST_IMAGE_MIN_RENDER_SIZE 16
 
 static gboolean wp_ignore_button_drag = FALSE;
 
 static void
 calculate_thumbnail_sizes (AppearanceData *data,
+                           gint           view_width,
                            gint           *thumb_width,
                            gint           *thumb_height,
                            gint           *item_width)
 {
   gdouble aspect;
-  gint view_width;
 
   gint iv_margin = 6;
   gint iv_item_padding = 6;
@@ -1034,25 +1039,10 @@ calculate_thumbnail_sizes (AppearanceData *data,
   GtkStateFlags state;
   GtkBorder border, padding;
   gint extra_borders = 0;
-
-  view_width = gtk_widget_get_allocated_width (GTK_WIDGET (data->wp_view));
   aspect = get_monitor_aspect_ratio_for_widget (GTK_WIDGET (data->wp_view));
 
-  if (view_width <= 100) {
-    gint default_view_width = 730;
-    gint columns = 3;
-    *item_width = (default_view_width - 2 * iv_margin - (columns - 1) * iv_col_spacing) / columns - 2 * iv_item_padding;
-    if (*item_width < LIST_IMAGE_SIZE_MIN)
-      *item_width = LIST_IMAGE_SIZE_MIN;
-
-    if (aspect > 1) {
-      *thumb_width = *item_width / aspect;
-      *thumb_height = *item_width;
-    } else {
-      *thumb_width = *item_width;
-      *thumb_height = *item_width * aspect;
-    }
-    return;
+  if (aspect <= 0.0 || aspect > LIST_IMAGE_ASPECT_MAX) {
+    aspect = LIST_IMAGE_ASPECT_FALLBACK;
   }
 
   context = gtk_widget_get_style_context (GTK_WIDGET (data->wp_view));
@@ -1069,24 +1059,30 @@ calculate_thumbnail_sizes (AppearanceData *data,
   if (iv_item_padding < 0) iv_item_padding = 6;
   if (iv_col_spacing < 0) iv_col_spacing = 0;
 
-  gint W_net = view_width - extra_borders - 2 * iv_margin;
-  if (W_net < 100)
-    W_net = 100;
+  if (view_width <= LIST_IMAGE_MIN_VIEW_WIDTH) {
+    view_width = LIST_IMAGE_DEFAULT_VIEW_WIDTH;
+  }
 
-  gint cell_target_width = LIST_IMAGE_CELL_TARGET_WIDTH;
-  gint C = (W_net + iv_col_spacing) / (cell_target_width + iv_col_spacing);
-  if (C < 1)
-    C = 1;
+  gint usable_width = view_width - extra_borders - 2 * iv_margin;
+  if (usable_width < LIST_IMAGE_MIN_VIEW_WIDTH)
+    usable_width = LIST_IMAGE_MIN_VIEW_WIDTH;
 
-  *item_width = (W_net + iv_col_spacing) / C - iv_col_spacing;
+  gint min_item_width = LIST_IMAGE_CELL_TARGET_WIDTH + 2 * iv_item_padding;
+
+  gint columns = (usable_width + iv_col_spacing) / (min_item_width + iv_col_spacing);
+  if (columns < 1)
+    columns = 1;
+
+  gint total_spacing = (columns - 1) * iv_col_spacing;
+  gint available_for_items = usable_width - total_spacing;
+  *item_width = (available_for_items + columns - 1) / columns;
+
   if (*item_width < LIST_IMAGE_SIZE_MIN)
     *item_width = LIST_IMAGE_SIZE_MIN;
 
-  gint list_image_size = *item_width - (2 * iv_item_padding);
-  if (list_image_size < 16)
-    list_image_size = 16;
-  if (list_image_size > 420)
-    list_image_size = 420;
+  gint list_image_size = *item_width - 2 * iv_item_padding;
+  if (list_image_size < LIST_IMAGE_MIN_RENDER_SIZE)
+    list_image_size = LIST_IMAGE_MIN_RENDER_SIZE;
 
   if (aspect > 1) {
     *thumb_width = list_image_size / aspect;
@@ -1106,7 +1102,7 @@ compute_thumbnail_sizes (AppearanceData *data)
   gint old_item_width;
   gint view_width = gtk_widget_get_allocated_width (GTK_WIDGET (data->wp_view));
 
-  if (view_width <= 100) {
+  if (view_width <= LIST_IMAGE_MIN_VIEW_WIDTH) {
     return FALSE;
   }
 
@@ -1114,7 +1110,7 @@ compute_thumbnail_sizes (AppearanceData *data)
   old_height = data->thumb_height;
   old_item_width = gtk_icon_view_get_item_width (data->wp_view);
 
-  calculate_thumbnail_sizes (data, &data->thumb_width, &data->thumb_height,
+  calculate_thumbnail_sizes (data, view_width, &data->thumb_width, &data->thumb_height,
                              &item_width);
 
   if (item_width != old_item_width) {
@@ -1497,10 +1493,10 @@ wp_view_size_allocate_cb (GtkWidget     *widget,
   gint thumb_height;
   gint item_width;
 
-  if (allocation->width <= 100 || allocation->height <= 100)
+  if (allocation->width <= LIST_IMAGE_MIN_VIEW_WIDTH || allocation->height <= LIST_IMAGE_MIN_VIEW_WIDTH)
     return;
 
-  calculate_thumbnail_sizes (data, &thumb_width, &thumb_height, &item_width);
+  calculate_thumbnail_sizes (data, allocation->width, &thumb_width, &thumb_height, &item_width);
 
   if (item_width != gtk_icon_view_get_item_width (data->wp_view)) {
     gtk_icon_view_set_item_width (data->wp_view, item_width);
@@ -1597,12 +1593,19 @@ desktop_init (AppearanceData *data,
   gtk_cell_layout_clear (GTK_CELL_LAYOUT (data->wp_view));
 
   cr = gtk_cell_renderer_pixbuf_new ();
-  g_object_set (cr, "xpad", 0, "ypad", 0, NULL);
+  g_object_set (cr,
+                "xpad", 0,
+                "ypad", 0,
+                "xalign", 0.0,
+                "yalign", 0.0,
+                NULL);
 
   gtk_cell_layout_pack_start (GTK_CELL_LAYOUT (data->wp_view), cr, TRUE);
   gtk_cell_layout_set_attributes (GTK_CELL_LAYOUT (data->wp_view), cr,
                                   "pixbuf", 0,
                                   NULL);
+  gtk_icon_view_set_margin (data->wp_view, 2);
+  gtk_icon_view_set_item_padding (data->wp_view, 2);
   gtk_icon_view_set_column_spacing (data->wp_view, 0);
   gtk_icon_view_set_row_spacing (data->wp_view, 3);
 
