@@ -233,7 +233,6 @@ main (int argc, char **argv)
   gchar *install_filename = NULL;
   gchar *start_page = NULL;
   gchar **wallpaper_files = NULL;
-  gboolean background_only_start;
   GOptionContext *option_context;
   GOptionEntry option_entries[] = {
       { "install-theme",
@@ -273,18 +272,10 @@ main (int argc, char **argv)
   if (wallpaper_files && !install_filename && !start_page)
     start_page = g_strdup ("background");
 
-  background_only_start = (start_page != NULL &&
-                           strcmp (start_page, "background") == 0 &&
-                           install_filename == NULL);
-
-  if (background_only_start) {
-    ensure_background_page_initialized (data, (const gchar **) wallpaper_files);
-  } else {
-    ensure_theme_page_initialized (data);
-    ensure_background_page_initialized (data, (const gchar **) wallpaper_files);
-    ensure_font_page_initialized (data);
-    ensure_interface_page_initialized (data);
-  }
+  ensure_theme_page_initialized (data);
+  ensure_background_page_initialized (data, (const gchar **) wallpaper_files);
+  ensure_font_page_initialized (data);
+  ensure_interface_page_initialized (data);
   g_strfreev (wallpaper_files);
 
   /* prepare the main window */
