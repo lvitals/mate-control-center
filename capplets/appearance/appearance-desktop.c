@@ -1534,7 +1534,6 @@ wp_thumbnail_renderer_render (GtkCellRenderer      *cell,
   if (!(flags & GTK_CELL_RENDERER_SELECTED))
     return;
 
-  const gint bw = 3;
   GtkStyleContext *style;
   GdkRGBA  color;
   GdkRGBA *c = NULL;
@@ -1552,19 +1551,30 @@ wp_thumbnail_renderer_render (GtkCellRenderer      *cell,
   if (color.alpha <= 0.01)
     color = (GdkRGBA){ 0.0, 0.45, 1.0, 1.0 };
 
-  GdkRectangle r = *cell_area;
+  /* Stroked rectangle: inset path by half stroke-width so the stroke
+     stays exactly inside cell_area, giving equal width on all 4 sides. */
+  const gdouble bw   = 3.0;
+  const gdouble half = bw / 2.0;
+  gdouble x = (gdouble) cell_area->x + half;
+  gdouble y = (gdouble) cell_area->y + half;
+  gdouble w = (gdouble) cell_area->width  - bw;
+  gdouble h = (gdouble) cell_area->height - bw;
 
   cairo_save (cr);
+  cairo_set_line_join (cr, CAIRO_LINE_JOIN_MITER);
+
+  /* White halo for contrast against dark thumbnails */
+  cairo_set_line_width (cr, bw + 2.0);
+  cairo_set_source_rgba (cr, 1.0, 1.0, 1.0, 0.6);
+  cairo_rectangle (cr, x, y, w, h);
+  cairo_stroke (cr);
+
+  /* Selection color border */
+  cairo_set_line_width (cr, bw);
   cairo_set_source_rgba (cr, color.red, color.green, color.blue, 1.0);
-  /* top */
-  cairo_rectangle (cr, r.x, r.y, r.width, bw);
-  /* bottom */
-  cairo_rectangle (cr, r.x, r.y + r.height - bw, r.width, bw);
-  /* left */
-  cairo_rectangle (cr, r.x, r.y + bw, bw, r.height - 2 * bw);
-  /* right */
-  cairo_rectangle (cr, r.x + r.width - bw, r.y + bw, bw, r.height - 2 * bw);
-  cairo_fill (cr);
+  cairo_rectangle (cr, x, y, w, h);
+  cairo_stroke (cr);
+
   cairo_restore (cr);
 }
 
@@ -1660,8 +1670,8 @@ desktop_init (AppearanceData *data,
   g_object_set (cr,
                 "xpad",   0,
                 "ypad",   0,
-                "xalign", 0.0,
-                "yalign", 0.0,
+                "xalign", 0.5,
+                "yalign", 0.5,
                 NULL);
 
   gtk_cell_layout_pack_start (GTK_CELL_LAYOUT (data->wp_view), cr, FALSE);
