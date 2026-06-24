@@ -347,18 +347,30 @@ create_cover_thumbnail (GdkPixbuf *pixbuf,
     return NULL;
 
   framed = gdk_pixbuf_new (GDK_COLORSPACE_RGB, TRUE, 8, width, height);
-  gdk_pixbuf_fill (framed, 0x00000000);
+  gdk_pixbuf_fill (framed, 0xd0d0d0ff);
 
   src_x = MAX ((scaled_width - width) / 2, 0);
   src_y = MAX ((scaled_height - height) / 2, 0);
-  gdk_pixbuf_copy_area (scaled,
-                        src_x,
-                        src_y,
-                        MIN (width, scaled_width),
-                        MIN (height, scaled_height),
-                        framed,
-                        0,
-                        0);
+
+  if (gdk_pixbuf_get_has_alpha (scaled)) {
+    gdk_pixbuf_composite (scaled, framed,
+                          0, 0,
+                          MIN (width, scaled_width),
+                          MIN (height, scaled_height),
+                          -(gdouble) src_x, -(gdouble) src_y,
+                          1.0, 1.0,
+                          GDK_INTERP_NEAREST,
+                          255);
+  } else {
+    gdk_pixbuf_copy_area (scaled,
+                          src_x,
+                          src_y,
+                          MIN (width, scaled_width),
+                          MIN (height, scaled_height),
+                          framed,
+                          0,
+                          0);
+  }
   g_object_unref (scaled);
 
   return framed;
@@ -522,10 +534,18 @@ void mate_wp_item_update_description (MateWPItem * item) {
     gchar *description;
     gchar *size;
     gchar *dirname = g_path_get_dirname (item->filename);
+    gchar *basename = g_path_get_basename (item->filename);
+    gchar *display_path;
     gchar *artist;
 
     description = NULL;
     size = NULL;
+
+    /* Show full path split across two lines: directory/ then filename */
+    if (basename != NULL && *basename != '\0' && strcmp (basename, ".") != 0)
+      display_path = g_strconcat (dirname, "/\n", basename, NULL);
+    else
+      display_path = g_strdup (item->filename);
 
     if (!item->artist || item->artist[0] == 0 || !g_strcmp0(item->artist, "(none)"))
       artist = g_strdup (_("unknown"));
@@ -557,7 +577,8 @@ void mate_wp_item_update_description (MateWPItem * item) {
     if (description && size) {
       /* translators: <b>wallpaper name</b>
        * mime type, size
-       * Folder: /path/to/file
+       * Folder: /path/to/
+       * filename.ext
        * Artist: wallpaper author
        */
       item->description = g_markup_printf_escaped (_("<b>%s</b>\n"
@@ -567,12 +588,13 @@ void mate_wp_item_update_description (MateWPItem * item) {
                                                    item->name,
                                                    description,
                                                    size,
-                                                   dirname,
+                                                   display_path,
                                                    artist);
     } else {
       /* translators: <b>wallpaper name</b>
        * Image missing
-       * Folder: /path/to/file
+       * Folder: /path/to/
+       * filename.ext
        * Artist: wallpaper author
        */
       item->description = g_markup_printf_escaped (_("<b>%s</b>\n"
@@ -581,12 +603,14 @@ void mate_wp_item_update_description (MateWPItem * item) {
                                                      "Artist: %s"),
                                                    item->name,
                                                    _("Image missing"),
-                                                   dirname,
+                                                   display_path,
                                                    artist);
     }
 
     g_free (size);
     g_free (dirname);
+    g_free (basename);
+    g_free (display_path);
     g_free (artist);
     g_free (description);
   }
