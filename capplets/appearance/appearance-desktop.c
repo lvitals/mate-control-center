@@ -1073,9 +1073,7 @@ calculate_thumbnail_sizes (AppearanceData *data,
   if (columns < 1)
     columns = 1;
 
-  gint total_spacing = (columns - 1) * iv_col_spacing;
-  gint available_for_items = usable_width - total_spacing;
-  *item_width = (available_for_items + columns - 1) / columns;
+  *item_width = min_item_width;
 
   if (*item_width < LIST_IMAGE_SIZE_MIN)
     *item_width = LIST_IMAGE_SIZE_MIN;
