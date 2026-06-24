@@ -1512,6 +1512,72 @@ wp_view_size_allocate_cb (GtkWidget     *widget,
                                               data);
 }
 
+/* ---------- cell renderer: uniform filled selection frame ---------- */
+
+#define WP_TYPE_THUMBNAIL_RENDERER (wp_thumbnail_renderer_get_type ())
+G_DECLARE_FINAL_TYPE (WpThumbnailRenderer, wp_thumbnail_renderer,
+                      WP, THUMBNAIL_RENDERER, GtkCellRendererPixbuf)
+struct _WpThumbnailRenderer { GtkCellRendererPixbuf parent; };
+G_DEFINE_TYPE (WpThumbnailRenderer, wp_thumbnail_renderer, GTK_TYPE_CELL_RENDERER_PIXBUF)
+
+static void
+wp_thumbnail_renderer_render (GtkCellRenderer      *cell,
+                              cairo_t              *cr,
+                              GtkWidget            *widget,
+                              const GdkRectangle   *background_area,
+                              const GdkRectangle   *cell_area,
+                              GtkCellRendererState  flags)
+{
+  GTK_CELL_RENDERER_CLASS (wp_thumbnail_renderer_parent_class)->render (
+      cell, cr, widget, background_area, cell_area, flags);
+
+  if (!(flags & GTK_CELL_RENDERER_SELECTED))
+    return;
+
+  const gint bw = 3;
+  GtkStyleContext *style;
+  GdkRGBA  color;
+  GdkRGBA *c = NULL;
+
+  style = gtk_widget_get_style_context (widget);
+  gtk_style_context_save (style);
+  gtk_style_context_set_state (style, GTK_STATE_FLAG_SELECTED);
+  gtk_style_context_get (style, GTK_STATE_FLAG_SELECTED,
+                         GTK_STYLE_PROPERTY_BACKGROUND_COLOR, &c, NULL);
+  gtk_style_context_restore (style);
+
+  if (c) { color = *c; gdk_rgba_free (c); }
+  else     color = (GdkRGBA){ 0, 0, 0, 0 };
+
+  if (color.alpha <= 0.01)
+    color = (GdkRGBA){ 0.0, 0.45, 1.0, 1.0 };
+
+  GdkRectangle r = *cell_area;
+
+  cairo_save (cr);
+  cairo_set_source_rgba (cr, color.red, color.green, color.blue, 1.0);
+  /* top */
+  cairo_rectangle (cr, r.x, r.y, r.width, bw);
+  /* bottom */
+  cairo_rectangle (cr, r.x, r.y + r.height - bw, r.width, bw);
+  /* left */
+  cairo_rectangle (cr, r.x, r.y + bw, bw, r.height - 2 * bw);
+  /* right */
+  cairo_rectangle (cr, r.x + r.width - bw, r.y + bw, bw, r.height - 2 * bw);
+  cairo_fill (cr);
+  cairo_restore (cr);
+}
+
+static void
+wp_thumbnail_renderer_class_init (WpThumbnailRendererClass *klass)
+{
+  GTK_CELL_RENDERER_CLASS (klass)->render = wp_thumbnail_renderer_render;
+}
+
+static void wp_thumbnail_renderer_init (WpThumbnailRenderer *self) { (void) self; }
+
+/* ------------------------------------------------------------------ */
+
 void
 desktop_init (AppearanceData *data,
 	      const gchar **uris)
@@ -1590,15 +1656,15 @@ desktop_init (AppearanceData *data,
 
   gtk_cell_layout_clear (GTK_CELL_LAYOUT (data->wp_view));
 
-  cr = gtk_cell_renderer_pixbuf_new ();
+  cr = g_object_new (WP_TYPE_THUMBNAIL_RENDERER, NULL);
   g_object_set (cr,
-                "xpad", 0,
-                "ypad", 0,
+                "xpad",   0,
+                "ypad",   0,
                 "xalign", 0.0,
                 "yalign", 0.0,
                 NULL);
 
-  gtk_cell_layout_pack_start (GTK_CELL_LAYOUT (data->wp_view), cr, TRUE);
+  gtk_cell_layout_pack_start (GTK_CELL_LAYOUT (data->wp_view), cr, FALSE);
   gtk_cell_layout_set_attributes (GTK_CELL_LAYOUT (data->wp_view), cr,
                                   "pixbuf", 0,
                                   NULL);
