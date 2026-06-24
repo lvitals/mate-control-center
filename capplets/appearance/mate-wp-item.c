@@ -402,6 +402,8 @@ mate_wp_item_get_image_thumbnail (MateWPItem *item,
   if (item->fileinfo->thumburi != NULL) {
     pixbuf = gdk_pixbuf_new_from_file (item->fileinfo->thumburi, NULL);
     if (pixbuf != NULL) {
+      if (item->width == 0 || item->height == 0)
+        gdk_pixbuf_get_file_info (item->filename, &item->width, &item->height);
       item->base_pixbuf = g_object_ref (pixbuf);
       framed = create_cover_thumbnail (pixbuf, width, height);
       g_object_unref (pixbuf);
