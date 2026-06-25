@@ -312,9 +312,70 @@ add_slideshow_frame (GdkPixbuf *pixbuf)
 }
 
 static GdkPixbuf *
-create_cover_thumbnail (GdkPixbuf *pixbuf,
-                        gint       width,
-                        gint       height)
+create_color_background (MateBGColorType  shade_type,
+                         const GdkRGBA   *pcolor,
+                         const GdkRGBA   *scolor,
+                         gint             width,
+                         gint             height)
+{
+  GdkPixbuf *pixbuf;
+  GdkRGBA primary = { 0.0, 0.0, 0.0, 1.0 };
+  GdkRGBA secondary = { 0.0, 0.0, 0.0, 1.0 };
+  guchar *pixels;
+  gint rowstride;
+  gint n_channels;
+  gint x, y;
+
+  pixbuf = gdk_pixbuf_new (GDK_COLORSPACE_RGB, TRUE, 8, width, height);
+  if (pixbuf == NULL)
+    return NULL;
+
+  if (pcolor != NULL)
+    primary = *pcolor;
+  if (scolor != NULL)
+    secondary = *scolor;
+
+  if (shade_type == MATE_BG_COLOR_SOLID) {
+    guint32 fill;
+
+    fill = ((guint32) CLAMP ((gint) (primary.red * 255.0), 0, 255) << 24) |
+           ((guint32) CLAMP ((gint) (primary.green * 255.0), 0, 255) << 16) |
+           ((guint32) CLAMP ((gint) (primary.blue * 255.0), 0, 255) << 8) |
+           0xff;
+    gdk_pixbuf_fill (pixbuf, fill);
+    return pixbuf;
+  }
+
+  pixels = gdk_pixbuf_get_pixels (pixbuf);
+  rowstride = gdk_pixbuf_get_rowstride (pixbuf);
+  n_channels = gdk_pixbuf_get_n_channels (pixbuf);
+
+  for (y = 0; y < height; y++) {
+    for (x = 0; x < width; x++) {
+      gdouble ratio;
+      guchar *pixel;
+
+      if (shade_type == MATE_BG_COLOR_H_GRADIENT)
+        ratio = width > 1 ? (gdouble) x / (gdouble) (width - 1) : 0.0;
+      else
+        ratio = height > 1 ? (gdouble) y / (gdouble) (height - 1) : 0.0;
+
+      pixel = pixels + y * rowstride + x * n_channels;
+      pixel[0] = CLAMP ((gint) ((primary.red + (secondary.red - primary.red) * ratio) * 255.0), 0, 255);
+      pixel[1] = CLAMP ((gint) ((primary.green + (secondary.green - primary.green) * ratio) * 255.0), 0, 255);
+      pixel[2] = CLAMP ((gint) ((primary.blue + (secondary.blue - primary.blue) * ratio) * 255.0), 0, 255);
+      pixel[3] = 255;
+    }
+  }
+
+  return pixbuf;
+}
+
+static GdkPixbuf *
+create_cover_thumbnail (MateWPItem *item,
+                        GdkPixbuf  *pixbuf,
+                        gint        width,
+                        gint        height)
 {
   GdkPixbuf *scaled;
   GdkPixbuf *framed;
@@ -346,8 +407,15 @@ create_cover_thumbnail (GdkPixbuf *pixbuf,
   if (scaled == NULL)
     return NULL;
 
-  framed = gdk_pixbuf_new (GDK_COLORSPACE_RGB, TRUE, 8, width, height);
-  gdk_pixbuf_fill (framed, 0xd0d0d0ff);
+  framed = create_color_background (item->shade_type,
+                                    item->pcolor,
+                                    item->scolor,
+                                    width,
+                                    height);
+  if (framed == NULL) {
+    g_object_unref (scaled);
+    return NULL;
+  }
 
   src_x = MAX ((scaled_width - width) / 2, 0);
   src_y = MAX ((scaled_height - height) / 2, 0);
@@ -394,7 +462,7 @@ mate_wp_item_get_image_thumbnail (MateWPItem *item,
     return NULL;
 
   if (item->base_pixbuf != NULL) {
-    framed = create_cover_thumbnail (item->base_pixbuf, width, height);
+    framed = create_cover_thumbnail (item, item->base_pixbuf, width, height);
     if (framed != NULL)
       return framed;
   }
@@ -405,7 +473,7 @@ mate_wp_item_get_image_thumbnail (MateWPItem *item,
       if (item->width == 0 || item->height == 0)
         gdk_pixbuf_get_file_info (item->filename, &item->width, &item->height);
       item->base_pixbuf = g_object_ref (pixbuf);
-      framed = create_cover_thumbnail (pixbuf, width, height);
+      framed = create_cover_thumbnail (item, pixbuf, width, height);
       g_object_unref (pixbuf);
 
       if (framed != NULL)
@@ -459,7 +527,7 @@ mate_wp_item_get_image_thumbnail (MateWPItem *item,
 
   item->base_pixbuf = g_object_ref (pixbuf);
 
-  framed = create_cover_thumbnail (pixbuf, width, height);
+  framed = create_cover_thumbnail (item, pixbuf, width, height);
 
   if (framed != NULL && thumbs != NULL) {
     mate_desktop_thumbnail_factory_save_thumbnail (thumbs,
