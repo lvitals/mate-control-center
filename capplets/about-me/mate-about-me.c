@@ -42,6 +42,7 @@
 
 #define MAX_HEIGHT 100
 #define MAX_WIDTH  100
+#define FACE_ICON_SIZE 256
 
 typedef struct {
 
@@ -70,6 +71,31 @@ typedef struct {
 } MateAboutMe;
 
 static MateAboutMe *me = NULL;
+
+static GdkPixbuf *
+about_me_create_face_pixbuf (GdkPixbuf *pixbuf)
+{
+	int width, height, size, src_x, src_y;
+	GdkPixbuf *cropped;
+	GdkPixbuf *scaled;
+
+	g_return_val_if_fail (GDK_IS_PIXBUF (pixbuf), NULL);
+
+	width = gdk_pixbuf_get_width (pixbuf);
+	height = gdk_pixbuf_get_height (pixbuf);
+	size = MIN (width, height);
+	src_x = (width - size) / 2;
+	src_y = (height - size) / 2;
+
+	cropped = gdk_pixbuf_new_subpixbuf (pixbuf, src_x, src_y, size, size);
+	scaled = gdk_pixbuf_scale_simple (cropped,
+					  FACE_ICON_SIZE,
+					  FACE_ICON_SIZE,
+					  GDK_INTERP_BILINEAR);
+	g_object_unref (cropped);
+
+	return scaled;
+}
 
 static void
 about_me_destroy (void)
@@ -130,17 +156,13 @@ about_me_update_photo (MateAboutMe *me)
 
 	if (me->image_changed && me->have_image) {
 		GdkPixbufLoader *loader = gdk_pixbuf_loader_new ();
-		GdkPixbuf *pixbuf = NULL, *scaled = NULL;
-		int height, width;
-		gboolean do_scale = FALSE;
-		float scale = 1.0;
-		float scalex = 1.0, scaley = 1.0;
+		GdkPixbuf *pixbuf = NULL, *face = NULL;
+		char *face_data = NULL;
+		gsize face_length;
 
 		e_image_chooser_get_image_data (E_IMAGE_CHOOSER (me->image_chooser), (char **) &data, &length);
 
-		/* Before updating the image in EDS scale it to a reasonable size
-		   so that the user doesn't get an application that does not respond
-		   or that takes 100% CPU */
+		/* Decode the selected image, then publish a bounded square PNG. */
 		gdk_pixbuf_loader_write (loader, data, length, NULL);
 		gdk_pixbuf_loader_close (loader, NULL);
 
@@ -151,40 +173,30 @@ about_me_update_photo (MateAboutMe *me)
 
 		g_object_unref (loader);
 
-		height = gdk_pixbuf_get_height (pixbuf);
-		width = gdk_pixbuf_get_width (pixbuf);
-
-		if (width > MAX_WIDTH) {
-			scalex = (float)MAX_WIDTH/width;
-			if (scalex < scale) {
-				scale = scalex;
-			}
-			do_scale = TRUE;
-		}
-
-		if (height > MAX_HEIGHT) {
-			scaley = (float)MAX_HEIGHT/height;
-			if (scaley < scale) {
-				scale = scaley;
-			}
-			do_scale = TRUE;
-		}
-
-		if (do_scale) {
-			char *scaled_data = NULL;
-			gsize scaled_length;
-
-			scaled = gdk_pixbuf_scale_simple (pixbuf, width*scale, height*scale, GDK_INTERP_BILINEAR);
-			gdk_pixbuf_save_to_buffer (scaled, &scaled_data, &scaled_length, "png", NULL,
-						   "compression", "9", NULL);
-
+		if (pixbuf == NULL) {
+			g_warning ("Could not read selected user image");
 			g_free (data);
-			data = (guchar *) scaled_data;
-			length = scaled_length;
+			return;
 		}
 
-		/* Save the image for MDM */
-		/* FIXME: I would have to read the default used by the mdmgreeter program */
+		face = about_me_create_face_pixbuf (pixbuf);
+		if (face == NULL ||
+		    !gdk_pixbuf_save_to_buffer (face, &face_data, &face_length, "png", &error,
+						"compression", "9", NULL)) {
+			g_warning ("Could not prepare user image: %s", error ? error->message : "unknown error");
+			g_clear_error (&error);
+			g_clear_object (&face);
+			g_object_unref (pixbuf);
+			g_free (data);
+			return;
+		}
+
+		g_free (data);
+		data = (guchar *) face_data;
+		length = face_length;
+		g_object_unref (face);
+
+		/* Save the image for greeters that read ~/.face directly. */
 		error = NULL;
 		file = g_build_filename (g_get_home_dir (), ".face", NULL);
 		if (g_file_set_contents (file, (gchar *)data, length, &error) == TRUE) {
@@ -201,7 +213,7 @@ about_me_update_photo (MateAboutMe *me)
 		g_object_unref (pixbuf);
 		g_free (data);
 	} else if (me->image_changed && !me->have_image) {
-		/* Update the image in the card */
+		/* Remove the image from greeters that read ~/.face directly. */
 		file = g_build_filename (g_get_home_dir (), ".face", NULL);
 
 		g_unlink (file);
@@ -374,7 +386,7 @@ about_me_icon_theme_changed (GtkWindow    *window,
 		g_object_unref (icon);
 	}
 
-	if (me->have_image) {
+	if (!me->have_image) {
 #if HAVE_ACCOUNTSSERVICE
 		act_user_set_icon_file (me->user, me->person);
 #endif

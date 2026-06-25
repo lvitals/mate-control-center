@@ -29,6 +29,7 @@
 #include "gtkrc-utils.h"
 #include "theme-thumbnail.h"
 #include "capplet-util.h"
+#include "appearance-accountsservice.h"
 #include "appearance-style.h"
 #include <gdk/gdkx.h>
 
@@ -153,7 +154,6 @@ treeview_selection_changed_callback (GtkTreeSelection *selection, guint data)
 
     if (list_value) {
       g_settings_set_string (settings, key, list_value);
-
     /*Load the gnome interface schema if we are running under wayland and it is present*/
       if (!(GDK_IS_X11_DISPLAY (gdk_display_get_default())))
       {
@@ -443,6 +443,7 @@ gtk_theme_changed (GSettings *settings, gchar *key, AppearanceData *data)
 
   gtk_widget_set_sensitive (appearance_capplet_get_widget (data, "gtk_themes_delete"),
 			    theme_is_writable (theme));
+  appearance_accountsservice_sync_appearance (data);
 }
 
 static void
@@ -476,12 +477,14 @@ icon_theme_changed (GSettings *settings, gchar *key, AppearanceData *data)
 
   gtk_widget_set_sensitive (appearance_capplet_get_widget (data, "icon_themes_delete"),
 			    theme_is_writable (theme));
+  appearance_accountsservice_sync_appearance (data);
 }
 
 static void
 cursor_size_changed_cb (int size, AppearanceData *data)
 {
   g_settings_set_int (data->mouse_settings, CURSOR_SIZE_KEY, size);
+  appearance_accountsservice_sync_appearance (data);
 
   /*If running under wayland and the GNOME interface schema is installed
    *set the cursor size under the GNOME gsettings too
@@ -616,6 +619,7 @@ cursor_theme_changed (GSettings *settings, gchar *key, AppearanceData *data)
 
   gtk_widget_set_sensitive (appearance_capplet_get_widget (data, "cursor_themes_delete"),
 			    theme_is_writable (theme));
+  appearance_accountsservice_sync_appearance (data);
 
 }
 

@@ -10,8 +10,9 @@
 #ifndef __APPEARANCE_ACCOUNTSSERVICE_H__
 #define __APPEARANCE_ACCOUNTSSERVICE_H__
 
-#include <glib.h>
+#include "appearance.h"
 
 void appearance_accountsservice_set_background_file (const gchar *filename);
+void appearance_accountsservice_sync_appearance (AppearanceData *data);
 
 #endif /* __APPEARANCE_ACCOUNTSSERVICE_H__ */

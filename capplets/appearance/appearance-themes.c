@@ -481,6 +481,7 @@ theme_message_area_response_cb (GtkWidget *w,
         g_free (data->revert_monospace_font);
         data->revert_monospace_font = NULL;
       }
+      appearance_accountsservice_sync_appearance (data);
       break;
 
     case RESPONSE_APPLY_FONT:
@@ -553,6 +554,7 @@ theme_message_area_response_cb (GtkWidget *w,
         }
         g_settings_set_string (data->interface_settings, MONOSPACE_FONT_KEY, theme->monospace_font);
       }
+      appearance_accountsservice_sync_appearance (data);
       break;
 
     case RESPONSE_INSTALL_ENGINE:
@@ -990,6 +992,7 @@ theme_drag_data_received_cb (GtkWidget *widget,
 static void background_or_font_changed(GSettings *settings, gchar *key, AppearanceData* data)
 {
 	theme_message_area_update(data);
+	appearance_accountsservice_sync_appearance(data);
 }
 
 void themes_init(AppearanceData* data)
