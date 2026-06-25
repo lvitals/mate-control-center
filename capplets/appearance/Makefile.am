@@ -11,6 +11,8 @@ nodist_mate_appearance_properties_SOURCES = \
 	$(BUILT_SOURCES)
 mate_appearance_properties_SOURCES = \
 	appearance.h \
+	appearance-accountsservice.c \
+	appearance-accountsservice.h \
 	appearance-desktop.c \
 	appearance-desktop.h \
 	appearance-font.c \

@@ -20,6 +20,7 @@
  */
 
 #include "appearance.h"
+#include "appearance-accountsservice.h"
 #include "theme-thumbnail.h"
 #include "mate-theme-apply.h"
 #include "theme-installer.h"
@@ -447,6 +448,7 @@ theme_message_area_response_cb (GtkWidget *w,
   {
     case RESPONSE_APPLY_BG:
       g_settings_set_string (data->wp_settings, WP_FILE_KEY, theme->background_image);
+      appearance_accountsservice_set_background_file (theme->background_image);
       break;
 
     case RESPONSE_REVERT_FONT:

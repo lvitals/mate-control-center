@@ -24,6 +24,7 @@
 #include "mate-wp-info.h"
 #include "mate-wp-item.h"
 #include "mate-wp-xml.h"
+#include "appearance-accountsservice.h"
 #include "appearance-desktop.h"
 
 #include <glib/gi18n.h>
@@ -617,6 +618,7 @@ static gboolean
 wp_props_wp_set (AppearanceData *data, MateWPItem *item)
 {
   gchar *pcolor, *scolor;
+  gchar *background_file = NULL;
 
   g_settings_delay (data->wp_settings);
 
@@ -624,6 +626,7 @@ wp_props_wp_set (AppearanceData *data, MateWPItem *item)
   {
     g_settings_set_enum (data->wp_settings, WP_OPTIONS_KEY, 0);
     g_settings_set_string (data->wp_settings, WP_FILE_KEY, "");
+    background_file = g_strdup ("");
   }
   else
   {
@@ -638,6 +641,7 @@ wp_props_wp_set (AppearanceData *data, MateWPItem *item)
       g_warning ("Failed to convert filename to UTF-8: %s", item->filename);
     } else {
       g_settings_set_string (data->wp_settings, WP_FILE_KEY, uri);
+      background_file = g_strdup (uri);
       g_free (uri);
     }
 
@@ -654,6 +658,9 @@ wp_props_wp_set (AppearanceData *data, MateWPItem *item)
   g_free (scolor);
 
   g_settings_apply (data->wp_settings);
+  if (background_file != NULL)
+    appearance_accountsservice_set_background_file (background_file);
+  g_free (background_file);
 
   return FALSE;
 }

@@ -1,4 +1,5 @@
 sources = files(
+  'appearance-accountsservice.c',
   'appearance-desktop.c',
   'appearance-font.c',
   'appearance-main.c',
