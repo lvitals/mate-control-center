@@ -435,6 +435,8 @@ wp_shade_type_changed (GtkWidget *combobox,
     g_settings_set_enum (data->wp_settings, WP_SHADING_KEY, item->shade_type);
     g_settings_apply (data->wp_settings);
   }
+
+  appearance_accountsservice_sync_background (data);
 }
 
 static void
@@ -658,8 +660,7 @@ wp_props_wp_set (AppearanceData *data, MateWPItem *item)
   g_free (scolor);
 
   g_settings_apply (data->wp_settings);
-  if (background_file != NULL)
-    appearance_accountsservice_set_background_file (background_file);
+  appearance_accountsservice_sync_background (data);
   g_free (background_file);
 
   return FALSE;

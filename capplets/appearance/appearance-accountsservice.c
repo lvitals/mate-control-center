@@ -9,6 +9,7 @@
 
 #include "appearance.h"
 #include "appearance-accountsservice.h"
+#include "mate-wp-item.h"
 
 #include <gio/gio.h>
 
@@ -23,6 +24,9 @@
 #define LIGHTDM_ACCOUNTS_INTERFACE      "org.freedesktop.DisplayManager.AccountsService"
 #define LIGHTDM_BACKGROUND_FILE         "BackgroundFile"
 #define MATE_ACCOUNTS_INTERFACE         "org.mate.DisplayManager.AccountsService"
+#define MATE_BACKGROUND_SHADING_TYPE    "BackgroundColorShadingType"
+#define MATE_BACKGROUND_PRIMARY_COLOR   "BackgroundPrimaryColor"
+#define MATE_BACKGROUND_SECONDARY_COLOR "BackgroundSecondaryColor"
 
 static GDBusConnection *
 accountsservice_get_current_user (gchar **user_path)
@@ -156,6 +160,38 @@ appearance_accountsservice_set_background_file (const gchar *filename)
 }
 
 void
+appearance_accountsservice_sync_background (AppearanceData *data)
+{
+  gchar *value;
+
+  g_return_if_fail (data != NULL);
+
+  if (data->wp_settings == NULL)
+    return;
+
+  value = g_settings_get_string (data->wp_settings, WP_FILE_KEY);
+  appearance_accountsservice_set_background_file (value);
+  g_free (value);
+
+  accountsservice_set_string (MATE_ACCOUNTS_INTERFACE,
+                              MATE_BACKGROUND_SHADING_TYPE,
+                              wp_item_shading_to_string (g_settings_get_enum (data->wp_settings,
+                                                                              WP_SHADING_KEY)));
+
+  value = g_settings_get_string (data->wp_settings, WP_PCOLOR_KEY);
+  accountsservice_set_string (MATE_ACCOUNTS_INTERFACE,
+                              MATE_BACKGROUND_PRIMARY_COLOR,
+                              value);
+  g_free (value);
+
+  value = g_settings_get_string (data->wp_settings, WP_SCOLOR_KEY);
+  accountsservice_set_string (MATE_ACCOUNTS_INTERFACE,
+                              MATE_BACKGROUND_SECONDARY_COLOR,
+                              value);
+  g_free (value);
+}
+
+void
 appearance_accountsservice_sync_appearance (AppearanceData *data)
 {
   gchar *value;
@@ -204,4 +240,6 @@ appearance_accountsservice_sync_appearance (AppearanceData *data)
     accountsservice_set_string (MATE_ACCOUNTS_INTERFACE, "XftRgba", value);
     g_free (value);
   }
+
+  appearance_accountsservice_sync_background (data);
 }
