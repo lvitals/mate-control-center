@@ -92,12 +92,13 @@ Author: Wolfgang Ulbrich
                     <property name="spacing">12</property>
                     <child>
                       <object class="GtkButton" id="button-image">
-                        <property name="width_request">100</property>
-                        <property name="height_request">100</property>
+                        <property name="width_request">112</property>
+                        <property name="height_request">112</property>
                         <property name="visible">True</property>
                         <property name="can_focus">True</property>
                         <property name="receives_default">False</property>
                         <property name="tooltip_text" translatable="yes">Select your photo</property>
+                        <property name="relief">none</property>
                         <child>
                           <placeholder/>
                         </child>
@@ -109,11 +110,44 @@ Author: Wolfgang Ulbrich
                       </packing>
                     </child>
                     <child>
-                      <object class="GtkLabel" id="fullname">
+                      <object class="GtkStack" id="realname-stack">
                         <property name="visible">True</property>
                         <property name="can_focus">False</property>
                         <property name="halign">start</property>
-                        <property name="label" translatable="yes">Full Name</property>
+                        <property name="transition_type">none</property>
+                        <child>
+                          <object class="GtkEventBox" id="realname-display-event">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="visible_window">False</property>
+                            <child>
+                              <object class="GtkLabel" id="fullname">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="halign">start</property>
+                                <property name="label" translatable="yes">Full Name</property>
+                              </object>
+                            </child>
+                          </object>
+                          <packing>
+                            <property name="name">display</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkEntry" id="entry-realname">
+                            <property name="visible">True</property>
+                            <property name="can_focus">True</property>
+                            <property name="halign">start</property>
+                            <property name="width_request">180</property>
+                            <property name="height_request">28</property>
+                            <property name="max_width_chars">22</property>
+                            <property name="placeholder_text" translatable="yes">Full Name</property>
+                            <property name="activates_default">False</property>
+                          </object>
+                          <packing>
+                            <property name="name">edit</property>
+                          </packing>
+                        </child>
                       </object>
                       <packing>
                         <property name="expand">False</property>

@@ -55,8 +55,11 @@ GType      e_image_chooser_get_type       (void);
 
 gboolean   e_image_chooser_set_from_file  (EImageChooser *chooser, const char *filename);
 gboolean   e_image_chooser_set_image_data (EImageChooser *chooser, char *data, gsize data_length);
+void       e_image_chooser_set_fallback_name
+                                             (EImageChooser *chooser, const char *name);
 void       e_image_chooser_set_editable   (EImageChooser *chooser, gboolean editable);
 void       e_image_chooser_set_scaleable  (EImageChooser *chooser, gboolean scaleable);
+void       e_image_chooser_show_selector  (EImageChooser *chooser, GtkWindow *parent);
 
 gboolean   e_image_chooser_get_image_data (EImageChooser *chooser, char **data, gsize *data_length);
 

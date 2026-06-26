@@ -92,6 +92,21 @@ enable_accountsservice = get_option('accountsservice')
 accounts_dep = dependency('accountsservice', version: '>= 0.6.39', required: enable_accountsservice)
 config_h.set10('HAVE_ACCOUNTSSERVICE', accounts_dep.found())
 
+enable_gstreamer = get_option('gstreamer')
+gstreamer_dep = dependency('gstreamer-1.0', required: enable_gstreamer)
+gstreamer_app_dep = dependency('gstreamer-app-1.0', required: enable_gstreamer)
+gstreamer_video_dep = dependency('gstreamer-video-1.0', required: enable_gstreamer)
+gst_inspect = find_program('gst-inspect-1.0', required: enable_gstreamer)
+have_gstreamer_gtk_sink = false
+if gst_inspect.found()
+  have_gstreamer_gtk_sink = run_command(gst_inspect, 'gtksink', check: false).returncode() == 0
+endif
+have_gstreamer = enable_gstreamer and gstreamer_dep.found() and gstreamer_app_dep.found() and gstreamer_video_dep.found() and have_gstreamer_gtk_sink
+if enable_gstreamer and not have_gstreamer
+  error('GStreamer webcam support requires gstreamer-1.0, gstreamer-app-1.0, gstreamer-video-1.0, and the gtksink runtime element from the GTK GStreamer plugin. Disable with -Dgstreamer=false.')
+endif
+config_h.set10('HAVE_GSTREAMER', have_gstreamer)
+
 wayland_client_dep = dependency('wayland-client')
 
 common_deps = [

@@ -31,9 +31,6 @@
 #include <act/act.h>
 #endif
 
-#define MATE_DESKTOP_USE_UNSTABLE_API
-#include <libmate-desktop/mate-desktop-thumbnail.h>
-
 #include "e-image-chooser.h"
 #include "mate-about-me-password.h"
 #include "mate-about-me-fingerprint.h"
@@ -57,17 +54,18 @@ typedef struct {
 
 	GdkScreen    	*screen;
 	GtkIconTheme 	*theme;
-	MateDesktopThumbnailFactory *thumbs;
 
 	gboolean      	 have_image;
 	gboolean      	 image_changed;
+	gboolean      	 loading_image;
 	gboolean      	 create_self;
 
 	gchar        	*person;
 	gchar 		*login;
 	gchar 		*username;
-
-	guint	      	 commit_timeout_id;
+	gchar           *pending_icon_file;
+	gchar           *pending_real_name;
+	gboolean         loading_real_name;
 } MateAboutMe;
 
 static MateAboutMe *me = NULL;
@@ -108,8 +106,225 @@ about_me_destroy (void)
 	g_free (me->person);
 	g_free (me->login);
 	g_free (me->username);
+	g_free (me->pending_icon_file);
+	g_free (me->pending_real_name);
 	g_free (me);
 	me = NULL;
+}
+
+static void
+about_me_set_accounts_icon_file (MateAboutMe *me, const gchar *file)
+{
+#if HAVE_ACCOUNTSSERVICE
+	g_free (me->pending_icon_file);
+	me->pending_icon_file = g_strdup (file);
+
+	if (me->user != NULL && act_user_is_loaded (me->user)) {
+		act_user_set_icon_file (me->user, me->pending_icon_file);
+		g_clear_pointer (&me->pending_icon_file, g_free);
+	}
+#endif
+}
+
+static void
+about_me_set_accounts_real_name (MateAboutMe *me, const gchar *real_name)
+{
+#if HAVE_ACCOUNTSSERVICE
+	g_free (me->pending_real_name);
+	me->pending_real_name = g_strdup (real_name);
+
+	if (me->user != NULL && act_user_is_loaded (me->user)) {
+		g_debug ("Updating user real name to: %s", me->pending_real_name);
+		act_user_set_real_name (me->user, me->pending_real_name);
+		g_clear_pointer (&me->pending_real_name, g_free);
+	}
+#endif
+}
+
+static void
+about_me_set_real_name_mode (MateAboutMe *me, const gchar *mode)
+{
+	GtkWidget *stack;
+
+	stack = GTK_WIDGET (gtk_builder_get_object (me->dialog, "realname-stack"));
+	gtk_stack_set_visible_child_name (GTK_STACK (stack), mode);
+}
+
+static void
+about_me_update_real_name_display (MateAboutMe *me)
+{
+	GtkWidget *label;
+	gchar *markup;
+	const gchar *real_name;
+
+	label = GTK_WIDGET (gtk_builder_get_object (me->dialog, "fullname"));
+	real_name = me->username;
+	if (real_name == NULL || !g_utf8_validate (real_name, -1, NULL))
+		real_name = g_get_real_name ();
+
+	markup = g_markup_printf_escaped ("<b><span size=\"xx-large\">%s</span></b>",
+					  real_name ? real_name : "");
+	gtk_label_set_markup (GTK_LABEL (label), markup);
+	g_free (markup);
+}
+
+static gboolean
+about_me_real_name_is_valid (const gchar *real_name)
+{
+	const gchar *p;
+	gchar *stripped;
+	gboolean valid = TRUE;
+
+	if (real_name == NULL)
+		return FALSE;
+
+	stripped = g_strdup (real_name);
+	g_strstrip (stripped);
+	if (*stripped == '\0')
+		valid = FALSE;
+	g_free (stripped);
+
+	if (!valid)
+		return FALSE;
+
+	if (!g_utf8_validate (real_name, -1, NULL))
+		return FALSE;
+
+	for (p = real_name; *p != '\0'; p = g_utf8_next_char (p)) {
+		gunichar ch;
+
+		ch = g_utf8_get_char (p);
+		if (!g_unichar_validate (ch) || g_unichar_iscntrl (ch))
+			return FALSE;
+	}
+
+	return TRUE;
+}
+
+static const gchar *
+about_me_get_initial_real_name (MateAboutMe *me)
+{
+#if HAVE_ACCOUNTSSERVICE
+	const gchar *real_name;
+
+	if (me->user != NULL && act_user_is_loaded (me->user)) {
+		real_name = act_user_get_real_name (me->user);
+		if (real_name != NULL && *real_name != '\0')
+			return real_name;
+	}
+#endif
+
+	return g_get_real_name ();
+}
+
+static void
+about_me_set_real_name_entry (MateAboutMe *me, const gchar *real_name)
+{
+	GtkWidget *entry;
+	gchar *safe_real_name;
+
+	entry = GTK_WIDGET (gtk_builder_get_object (me->dialog, "entry-realname"));
+	if (real_name != NULL && *real_name != '\0' && g_utf8_validate (real_name, -1, NULL))
+		safe_real_name = g_strdup (real_name);
+	else
+		safe_real_name = g_strdup (g_get_real_name ());
+
+	me->loading_real_name = TRUE;
+	gtk_entry_set_text (GTK_ENTRY (entry), safe_real_name);
+	me->loading_real_name = FALSE;
+
+	g_free (me->username);
+	me->username = safe_real_name;
+	about_me_update_real_name_display (me);
+	about_me_set_real_name_mode (me, "display");
+	e_image_chooser_set_fallback_name (E_IMAGE_CHOOSER (me->image_chooser), me->username);
+}
+
+static void
+about_me_commit_real_name (MateAboutMe *me)
+{
+	GtkWidget *entry;
+	const gchar *text;
+	gchar *real_name;
+	gchar *title;
+
+	if (me->loading_real_name)
+		return;
+
+	entry = GTK_WIDGET (gtk_builder_get_object (me->dialog, "entry-realname"));
+	text = gtk_entry_get_text (GTK_ENTRY (entry));
+	real_name = g_strdup (text);
+	g_strstrip (real_name);
+
+	if (!about_me_real_name_is_valid (real_name)) {
+		gtk_style_context_add_class (gtk_widget_get_style_context (entry), GTK_STYLE_CLASS_ERROR);
+		g_free (real_name);
+		return;
+	}
+
+	gtk_style_context_remove_class (gtk_widget_get_style_context (entry), GTK_STYLE_CLASS_ERROR);
+
+	if (g_strcmp0 (me->username, real_name) == 0) {
+		about_me_set_real_name_mode (me, "display");
+		g_free (real_name);
+		return;
+	}
+
+	g_free (me->username);
+	me->username = g_strdup (real_name);
+	about_me_update_real_name_display (me);
+	about_me_set_real_name_mode (me, "display");
+	e_image_chooser_set_fallback_name (E_IMAGE_CHOOSER (me->image_chooser), me->username);
+
+	title = g_strdup_printf (_("About %s"), me->username);
+	gtk_window_set_title (GTK_WINDOW (gtk_builder_get_object (me->dialog, "about-me-dialog")), title);
+	g_free (title);
+
+	about_me_set_accounts_real_name (me, real_name);
+	g_free (real_name);
+}
+
+static void
+about_me_real_name_changed_cb (GtkEditable *editable, MateAboutMe *me)
+{
+	if (me->loading_real_name)
+		return;
+
+	gtk_style_context_remove_class (gtk_widget_get_style_context (GTK_WIDGET (editable)),
+					GTK_STYLE_CLASS_ERROR);
+}
+
+static void
+about_me_real_name_activate_cb (GtkEntry *entry, MateAboutMe *me)
+{
+	about_me_commit_real_name (me);
+}
+
+static gboolean
+about_me_real_name_focus_out_cb (GtkWidget *entry, GdkEventFocus *event, MateAboutMe *me)
+{
+	about_me_real_name_activate_cb (GTK_ENTRY (entry), me);
+
+	return FALSE;
+}
+
+static gboolean
+about_me_real_name_display_button_press_cb (GtkWidget *widget,
+					    GdkEventButton *event,
+					    MateAboutMe *me)
+{
+	GtkWidget *entry;
+
+	if (event->button != 1)
+		return FALSE;
+
+	entry = GTK_WIDGET (gtk_builder_get_object (me->dialog, "entry-realname"));
+	gtk_style_context_remove_class (gtk_widget_get_style_context (entry), GTK_STYLE_CLASS_ERROR);
+	about_me_set_real_name_mode (me, "edit");
+	gtk_widget_grab_focus (entry);
+	gtk_editable_select_region (GTK_EDITABLE (entry), 0, -1);
+
+	return TRUE;
 }
 
 static void
@@ -120,7 +335,7 @@ about_me_load_photo (MateAboutMe *me)
 #if HAVE_ACCOUNTSSERVICE
 	const gchar   *act_file;
 
-	if (act_user_is_loaded (me->user)) {
+	if (me->user != NULL && act_user_is_loaded (me->user)) {
 		act_file = act_user_get_icon_file (me->user);
 		if ( act_file != NULL && strlen (act_file) > 1) {
 			file = g_strdup (act_file);
@@ -131,6 +346,7 @@ about_me_load_photo (MateAboutMe *me)
 		file = g_build_filename (g_get_home_dir (), ".face", NULL);
 	}
 
+	me->loading_image = TRUE;
 	me->image = gdk_pixbuf_new_from_file(file, &error);
 
 	if (me->image != NULL) {
@@ -138,10 +354,12 @@ about_me_load_photo (MateAboutMe *me)
 		me->have_image = TRUE;
 	} else {
 		me->have_image = FALSE;
-		g_warning ("Could not load %s: %s", file, error->message);
-		e_image_chooser_set_from_file (E_IMAGE_CHOOSER (me->image_chooser), me->person);
-		g_error_free (error);
+		if (error != NULL) {
+			g_warning ("Could not load %s: %s", file, error->message);
+			g_error_free (error);
+		}
 	}
+	me->loading_image = FALSE;
 	g_free (file);
 }
 
@@ -160,7 +378,10 @@ about_me_update_photo (MateAboutMe *me)
 		char *face_data = NULL;
 		gsize face_length;
 
-		e_image_chooser_get_image_data (E_IMAGE_CHOOSER (me->image_chooser), (char **) &data, &length);
+		if (!e_image_chooser_get_image_data (E_IMAGE_CHOOSER (me->image_chooser), (char **) &data, &length)) {
+			g_warning ("Could not get selected user image data");
+			return;
+		}
 
 		/* Decode the selected image, then publish a bounded square PNG. */
 		gdk_pixbuf_loader_write (loader, data, length, NULL);
@@ -202,7 +423,7 @@ about_me_update_photo (MateAboutMe *me)
 		if (g_file_set_contents (file, (gchar *)data, length, &error) == TRUE) {
 			g_chmod (file, 0644);
 #if HAVE_ACCOUNTSSERVICE
-			act_user_set_icon_file (me->user, file);
+			about_me_set_accounts_icon_file (me, file);
 #endif
 		} else {
 			g_warning ("Could not create %s: %s", file, error->message);
@@ -220,7 +441,7 @@ about_me_update_photo (MateAboutMe *me)
 
 		g_free (file);
 #if HAVE_ACCOUNTSSERVICE
-		act_user_set_icon_file (me->user, "");
+		about_me_set_accounts_icon_file (me, "");
 #endif
 	}
 }
@@ -233,139 +454,18 @@ about_me_load_info (MateAboutMe *me)
 }
 
 static void
-about_me_update_preview (GtkFileChooser *chooser,
-			 MateAboutMe   *me)
-{
-	gchar *uri;
-
-	uri = gtk_file_chooser_get_preview_uri (chooser);
-
-	if (uri) {
-		GtkWidget *image;
-		GdkPixbuf *pixbuf = NULL;
-		GFile *file;
-		GFileInfo *file_info;
-
-		if (!me->thumbs)
-			me->thumbs = mate_desktop_thumbnail_factory_new (MATE_DESKTOP_THUMBNAIL_SIZE_NORMAL);
-
-		file = g_file_new_for_uri (uri);
-		file_info = g_file_query_info (file,
-					       G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE,
-					       G_FILE_QUERY_INFO_NONE,
-					       NULL, NULL);
-		g_object_unref (file);
-
-		if (file_info != NULL) {
-			const gchar *content_type;
-
-			content_type = g_file_info_get_content_type (file_info);
-			if (content_type) {
-				gchar *mime_type;
-
-				mime_type = g_content_type_get_mime_type (content_type);
-
-				pixbuf = mate_desktop_thumbnail_factory_generate_thumbnail (me->thumbs,
-										     uri,
-										     mime_type);
-				g_free (mime_type);
-			}
-			g_object_unref (file_info);
-		}
-
-		image = gtk_file_chooser_get_preview_widget (chooser);
-
-		if (pixbuf != NULL) {
-			gtk_image_set_from_pixbuf (GTK_IMAGE (image), pixbuf);
-			g_object_unref (pixbuf);
-		} else {
-			gtk_image_set_from_icon_name (GTK_IMAGE (image),
-						  "dialog-question",
-						  GTK_ICON_SIZE_DIALOG);
-		}
-	}
-	gtk_file_chooser_set_preview_widget_active (chooser, TRUE);
-}
-
-static void
 about_me_image_clicked_cb (GtkWidget *button, MateAboutMe *me)
 {
-	GtkFileChooser *chooser_dialog;
-	gint response;
-	GtkBuilder *dialog;
-	GtkWidget  *image;
-	const gchar *chooser_dir = DATADIR"/pixmaps/faces";
-	const gchar *pics_dir;
-	GtkFileFilter *filter;
-
-	dialog = me->dialog;
-
-	chooser_dialog =
-		GTK_FILE_CHOOSER (
-			gtk_file_chooser_dialog_new (_("Select Image"),
-			GTK_WINDOW (gtk_builder_get_object (dialog, "about-me-dialog")),
-			GTK_FILE_CHOOSER_ACTION_OPEN,
-			_("No Image"), GTK_RESPONSE_NO,
-			"gtk-cancel", GTK_RESPONSE_CANCEL,
-			"gtk-open", GTK_RESPONSE_ACCEPT,
-			NULL));
-	gtk_window_set_modal (GTK_WINDOW (chooser_dialog), TRUE);
-	gtk_dialog_set_default_response (GTK_DIALOG (chooser_dialog), GTK_RESPONSE_ACCEPT);
-
-	gtk_file_chooser_add_shortcut_folder (chooser_dialog, chooser_dir, NULL);
-	pics_dir = g_get_user_special_dir (G_USER_DIRECTORY_PICTURES);
-	if (pics_dir != NULL)
-		gtk_file_chooser_add_shortcut_folder (chooser_dialog, pics_dir, NULL);
-
-	if (!g_file_test (chooser_dir, G_FILE_TEST_IS_DIR))
-		chooser_dir = g_get_home_dir ();
-
-	gtk_file_chooser_set_current_folder (chooser_dialog, chooser_dir);
-	gtk_file_chooser_set_use_preview_label (chooser_dialog,	FALSE);
-
-	image = gtk_image_new ();
-	gtk_file_chooser_set_preview_widget (chooser_dialog, image);
-	gtk_widget_set_size_request (image, 128, -1);
-
-	gtk_widget_show (image);
-
-	g_signal_connect (chooser_dialog, "update-preview",
-			  G_CALLBACK (about_me_update_preview), me);
-
-	filter = gtk_file_filter_new ();
-	gtk_file_filter_set_name (filter, _("Images"));
-	gtk_file_filter_add_pixbuf_formats (filter);
-	gtk_file_chooser_add_filter (chooser_dialog, filter);
-	filter = gtk_file_filter_new ();
-	gtk_file_filter_set_name (filter, _("All Files"));
-	gtk_file_filter_add_pattern(filter, "*");
-	gtk_file_chooser_add_filter (chooser_dialog, filter);
-
-	response = gtk_dialog_run (GTK_DIALOG (chooser_dialog));
-
-	if (response == GTK_RESPONSE_ACCEPT) {
-		gchar* filename;
-
-		filename = gtk_file_chooser_get_filename (chooser_dialog);
-		me->have_image = TRUE;
-		me->image_changed = TRUE;
-
-		e_image_chooser_set_from_file (E_IMAGE_CHOOSER (me->image_chooser), filename);
-		g_free (filename);
-		about_me_update_photo (me);
-	} else if (response == GTK_RESPONSE_NO) {
-		me->have_image = FALSE;
-		me->image_changed = TRUE;
-		e_image_chooser_set_from_file (E_IMAGE_CHOOSER (me->image_chooser), me->person);
-		about_me_update_photo (me);
-	}
-
-	gtk_widget_destroy (GTK_WIDGET (chooser_dialog));
+	e_image_chooser_show_selector (E_IMAGE_CHOOSER (me->image_chooser),
+				       GTK_WINDOW (gtk_builder_get_object (me->dialog, "about-me-dialog")));
 }
 
 static void
 about_me_image_changed_cb (GtkWidget *widget, MateAboutMe *me)
 {
+	if (me->loading_image)
+		return;
+
 	me->have_image = TRUE;
 	me->image_changed = TRUE;
 	about_me_update_photo (me);
@@ -386,20 +486,14 @@ about_me_icon_theme_changed (GtkWindow    *window,
 		g_object_unref (icon);
 	}
 
-	if (!me->have_image) {
-#if HAVE_ACCOUNTSSERVICE
-		act_user_set_icon_file (me->user, me->person);
-#endif
-		e_image_chooser_set_from_file (E_IMAGE_CHOOSER (me->image_chooser), me->person);
-	}
+	if (!me->have_image)
+		e_image_chooser_set_fallback_name (E_IMAGE_CHOOSER (me->image_chooser), me->username);
 }
 
 static void
 about_me_button_clicked_cb (GtkDialog *dialog, gint response_id, MateAboutMe *me)
 {
-	if (me->commit_timeout_id) {
-		g_source_remove (me->commit_timeout_id);
-	}
+	about_me_commit_real_name (me);
 
 	about_me_destroy ();
 	gtk_main_quit ();
@@ -426,7 +520,22 @@ about_me_fingerprint_button_clicked_cb (GtkWidget *button, MateAboutMe *me)
 static void on_user_is_loaded_changed (ActUser *user, GParamSpec *pspec, MateAboutMe* me)
 {
 	if (act_user_is_loaded (user)) {
-		about_me_load_photo (me);
+		gboolean had_pending_icon;
+
+		had_pending_icon = me->pending_icon_file != NULL;
+		if (me->pending_icon_file != NULL) {
+			act_user_set_icon_file (me->user, me->pending_icon_file);
+			g_clear_pointer (&me->pending_icon_file, g_free);
+		}
+		if (me->pending_real_name != NULL) {
+			g_debug ("Updating user real name to: %s", me->pending_real_name);
+			act_user_set_real_name (me->user, me->pending_real_name);
+			g_clear_pointer (&me->pending_real_name, g_free);
+		} else {
+			about_me_set_real_name_entry (me, about_me_get_initial_real_name (me));
+		}
+		if (!had_pending_icon)
+			about_me_load_photo (me);
 		g_signal_handlers_disconnect_by_func (G_OBJECT (user),
 				G_CALLBACK (on_user_is_loaded_changed),
 				me);
@@ -491,21 +600,29 @@ about_me_setup_dialog (void)
 				 G_CONNECT_SWAPPED);
 
 	me->login = g_strdup (g_get_user_name ());
-	me->username = g_strdup (g_get_real_name ());
+	me->username = g_strdup (about_me_get_initial_real_name (me));
+	e_image_chooser_set_fallback_name (E_IMAGE_CHOOSER (me->image_chooser), me->username);
 
 #if HAVE_ACCOUNTSSERVICE
 	manager = act_user_manager_get_default ();
 	me->user = act_user_manager_get_user (manager, me->login);
-	g_signal_connect (me->user, "notify::is-loaded", G_CALLBACK (on_user_is_loaded_changed), me);
+	if (me->user != NULL)
+		g_signal_connect (me->user, "notify::is-loaded", G_CALLBACK (on_user_is_loaded_changed), me);
 #endif
 	/* Contact Tab */
 	about_me_load_photo (me);
 
-	widget = WID ("fullname");
-	str = g_strdup_printf ("<b><span size=\"xx-large\">%s</span></b>", me->username);
-
-	gtk_label_set_markup (GTK_LABEL (widget), str);
-	g_free (str);
+	widget = WID ("entry-realname");
+	about_me_set_real_name_entry (me, me->username);
+	g_signal_connect (widget, "changed",
+			  G_CALLBACK (about_me_real_name_changed_cb), me);
+	g_signal_connect (widget, "activate",
+			  G_CALLBACK (about_me_real_name_activate_cb), me);
+	g_signal_connect (widget, "focus-out-event",
+			  G_CALLBACK (about_me_real_name_focus_out_cb), me);
+	widget = WID ("realname-display-event");
+	g_signal_connect (widget, "button-press-event",
+			  G_CALLBACK (about_me_real_name_display_button_press_cb), me);
 
 	widget = WID ("login");
 	gtk_label_set_text (GTK_LABEL (widget), me->login);

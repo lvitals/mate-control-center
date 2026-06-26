@@ -57,6 +57,27 @@ typedef struct {
 void set_fingerprint_label (GtkWidget *enable, GtkWidget *disable);
 void fingerprint_button_clicked (GtkBuilder *dialog, GtkWidget *enable, GtkWidget *disable);
 
+static gboolean
+is_fprint_unavailable_error (GError *error)
+{
+	gchar *error_name;
+	gboolean unavailable;
+
+	if (error == NULL)
+		return FALSE;
+
+	error_name = g_dbus_error_get_remote_error (error);
+	unavailable = g_error_matches (error,
+				       G_DBUS_ERROR,
+				       G_DBUS_ERROR_SERVICE_UNKNOWN) ||
+		      (error_name != NULL &&
+		       (g_str_equal (error_name, "org.freedesktop.DBus.Error.ServiceUnknown") ||
+			g_str_equal (error_name, "net.reactivated.Fprint.Error.NoSuchDevice")));
+	g_free (error_name);
+
+	return unavailable;
+}
+
 static void create_manager (void)
 {
 	GError *error = NULL;
@@ -70,7 +91,8 @@ static void create_manager (void)
 						 NULL,
 						 &error);
 	if (manager == NULL) {
-		g_warning ("Unable to contact Fprint Manager daemon: %s\n", error->message);
+		if (!is_fprint_unavailable_error (error))
+			g_warning ("Unable to contact Fprint Manager daemon: %s\n", error->message);
 		g_error_free (error);
 	}
 }
@@ -91,7 +113,8 @@ get_first_device (void)
 				      NULL,
 				      &error);
 	if (ret == NULL) {
-		g_warning ("Could not get default fprint device: %s", error->message);
+		if (!is_fprint_unavailable_error (error))
+			g_warning ("Could not get default fprint device: %s", error->message);
 		g_error_free (error);
 		return NULL;
 	}
