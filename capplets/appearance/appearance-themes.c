@@ -612,28 +612,28 @@ theme_message_area_update (AppearanceData *data)
     if (!show_apply_font && theme->documents_font) {
       font = g_settings_get_string (data->interface_settings, DOCUMENT_FONT_KEY);
       show_apply_font =
-          (!font || strcmp (theme->application_font, font) != 0);
+          (!font || strcmp (theme->documents_font, font) != 0);
       g_free (font);
     }
 
     if (data->caja_settings && !show_apply_font && theme->desktop_font) {
       font = g_settings_get_string (data->caja_settings, DESKTOP_FONT_KEY);
       show_apply_font =
-          (!font || strcmp (theme->application_font, font) != 0);
+          (!font || strcmp (theme->desktop_font, font) != 0);
       g_free (font);
     }
 
     if (!show_apply_font && theme->windowtitle_font) {
       font = g_settings_get_string (data->marco_settings, WINDOW_TITLE_FONT_KEY);
       show_apply_font =
-          (!font || strcmp (theme->application_font, font) != 0);
+          (!font || strcmp (theme->windowtitle_font, font) != 0);
       g_free (font);
     }
 
     if (!show_apply_font && theme->monospace_font) {
       font = g_settings_get_string (data->interface_settings, MONOSPACE_FONT_KEY);
       show_apply_font =
-          (!font || strcmp (theme->application_font, font) != 0);
+          (!font || strcmp (theme->monospace_font, font) != 0);
       g_free (font);
     }
 
@@ -782,6 +782,17 @@ theme_selection_changed_cb (GtkWidget *icon_view, AppearanceData *data)
       theme = mate_theme_meta_info_find (name);
 
     if (theme) {
+      g_free (data->revert_application_font);
+      g_free (data->revert_documents_font);
+      g_free (data->revert_desktop_font);
+      g_free (data->revert_windowtitle_font);
+      g_free (data->revert_monospace_font);
+      data->revert_application_font = NULL;
+      data->revert_documents_font = NULL;
+      data->revert_desktop_font = NULL;
+      data->revert_windowtitle_font = NULL;
+      data->revert_monospace_font = NULL;
+
       data->applying_theme = TRUE;
       mate_meta_theme_set (theme);
       data->applying_theme = FALSE;
