@@ -49,8 +49,6 @@ MatekbdDesktopConfig desktop_config;
 GSettings *xkb_general_settings;
 GSettings *xkb_kbd_settings;
 
-static Display *xdisplay_opened = NULL;
-
 char *
 xci_desc_to_utf8 (XklConfigItem * ci)
 {
@@ -128,10 +126,6 @@ cleanup_xkb_tabs (GtkBuilder * dialog)
 	g_object_unref (G_OBJECT (xkb_general_settings));
 	xkb_general_settings = NULL;
 
-	if (xdisplay_opened != NULL) {
-		XCloseDisplay (xdisplay_opened);
-		xdisplay_opened = NULL;
-	}
 }
 
 static void
@@ -206,11 +200,8 @@ setup_xkb_tabs (GtkBuilder * dialog)
 
 	if (GDK_IS_X11_DISPLAY (display)) {
 		xdisplay = GDK_DISPLAY_XDISPLAY (display);
-	} else {
-#ifdef GDK_WINDOWING_X11
-		xdisplay_opened = XOpenDisplay (NULL);
-		xdisplay = xdisplay_opened;
-#endif
+	} else if (setup_xkb_tabs_wayland (dialog)) {
+		return;
 	}
 
 	if (!xdisplay) {

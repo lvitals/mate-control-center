@@ -34,6 +34,8 @@ G_BEGIN_DECLS
 #define CWID(s) GTK_WIDGET (gtk_builder_get_object (chooser_dialog, s))
 extern XklEngine *engine;
 extern XklConfigRegistry *config_registry;
+
+extern gboolean setup_xkb_tabs_wayland (GtkBuilder *dialog);
 extern GSettings *xkb_kbd_settings;
 extern GSettings *xkb_general_settings;
 extern MatekbdKeyboardConfig initial_config;

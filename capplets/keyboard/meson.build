@@ -13,6 +13,7 @@ sources = files(
   'mate-keyboard-properties.c',
   'mate-keyboard-properties-a11y.c',
   'mate-keyboard-properties-xkb.c',
+  'mate-keyboard-properties-xkb-wayland.c',
   'mate-keyboard-properties-xkbmc.c',
   'mate-keyboard-properties-xkblt.c',
   'mate-keyboard-properties-xkbltadd.c',
@@ -35,7 +36,7 @@ executable(
   'mate-keyboard-properties',
   sources : sources,
   include_directories: config_inc,
-  dependencies : [common_deps, libcommon_dep, xklavier_dep, matekbd_dep, matekbdui_dep],
+  dependencies : [common_deps, libcommon_dep, xklavier_dep, xkbregistry_dep, matekbd_dep, matekbdui_dep],
   c_args : cflags,
   install : true,
   install_dir : get_option('bindir')
